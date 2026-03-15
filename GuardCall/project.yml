@@ -26,7 +26,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.app
         INFOPLIST_FILE: GuardCall/Info.plist
         PRODUCT_NAME: GuardCall
-        APP_GROUP: group.com.guardcall.shared
     entitlements:
       path: GuardCall/GuardCall.entitlements
     dependencies:
