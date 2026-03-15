@@ -21,14 +21,14 @@ jobs:
       - name: 📦 Installer XcodeGen
         run: brew install xcodegen
 
-      - name: ⚙️ Générer le .xcodeproj
+            - name: ⚙️ Générer le .xcodeproj
         run: |
-          cd GuardCall
-          xcodegen generate
+          xcodegen generate --spec project.yml --project .
+        working-directory: ${{ github.workspace }}
 
-      - name: 🏗️ Archive
+
+            - name: 🏗️ Archive
         run: |
-          cd GuardCall
           xcodebuild archive \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
@@ -38,6 +38,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
+        working-directory: ${{ github.workspace }}
+
 
       - name: 📲 Créer le .ipa
         run: |
