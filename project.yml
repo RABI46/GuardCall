@@ -1,0 +1,47 @@
+name: GuardCall
+options:
+  bundleIdPrefix: com.guardcall
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+
+targets:
+
+  GuardCall:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: GuardCall
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.app
+        INFOPLIST_FILE: GuardCall/Info.plist
+        PRODUCT_NAME: GuardCall
+    entitlements:
+      path: GuardCall/GuardCall.entitlements
+    dependencies:
+      - target: GuardCallDirectory
+
+  GuardCallDirectory:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: GuardCallDirectory
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.GuardCallDirectory
+        INFOPLIST_FILE: GuardCallDirectory/Info.plist
+        PRODUCT_NAME: GuardCallDirectory
+    entitlements:
+      path: GuardCallDirectory/GuardCallDirectory.entitlements
