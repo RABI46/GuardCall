@@ -45,3 +45,12 @@ targets:
         PRODUCT_NAME: GuardCallDirectory
     entitlements:
       path: GuardCallDirectory/GuardCallDirectory.entitlements
+
+  GuardCallTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: GuardCallTests
+    dependencies:
+      - target: GuardCall
