@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  issues: write
+  checks: write
+
 jobs:
   build:
     name: Build APK (debug)
@@ -115,10 +120,17 @@ jobs:
         if: failure()
         run: |
           echo "Posting gradle log to issue..."
-          LOG=$(tail -n 120 /tmp/gradle.log 2>/dev/null | tr -cd '[:print:]\n' | head -c 6000 || echo "no log")
-          # Create issue with log (api.github.com allowed)
-          echo "$LOG" | head -n 20
-          gh api repos/${{ github.repository }}/issues -f title="Gradle log ${{ github.sha }}" -f body="$LOG" 2>&1 | head -n 20 || true
+          # Prepare log for annotation (single line, %0A for newlines)
+          if [ -f /tmp/gradle.log ]; then
+            LOG_ONELINE=$(tail -n 60 /tmp/gradle.log | tr '\n' ' ' | sed 's/\"/\\"/g' | head -c 3000)
+            echo "::error title=Gradle log::$LOG_ONELINE"
+            # Also try to create issue with simpler permissions
+            LOG_SIMPLE=$(tail -n 100 /tmp/gradle.log | tr -cd '[:print:]\n' | head -c 5000)
+            echo "$LOG_SIMPLE" | head -n 30
+            gh api repos/${{ github.repository }}/issues -f title="Gradle log ${{ github.sha }}" -f body="$LOG_SIMPLE" 2>&1 | head -n 20 || echo "issue creation failed (permissions)"
+          else
+            echo "::error::No gradle log found at /tmp/gradle.log"
+          fi
 
       - name: Upload gradle log (always)
         if: always()
