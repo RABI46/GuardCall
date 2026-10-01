@@ -111,26 +111,14 @@ jobs:
             exit 1
           fi
 
-      - name: Create issue with log on failure
+      - name: Post log to issue on failure
         if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Creating issue with gradle log..."
-          LOG=$(tail -n 150 /tmp/gradle.log 2>/dev/null | head -c 50000 || echo "no log")
-          # Try to create issue via gh
-          gh issue create --title "Gradle log ${{ github.sha }} — $(date +%s)" --body "Build failed on ${{ github.sha }}:
-
-\`\`\`
-$LOG
-\`\`\`
-
-[Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" 2>&1 | head -n 20 || \
-          gh api repos/${{ github.repository }}/issues -f title="Gradle log ${{ github.sha }}" -f body="Build failed:
-
-\`\`\`
-$LOG
-\`\`\`" 2>&1 | head -n 20 || true
+          echo "Posting gradle log to issue..."
+          LOG=$(tail -n 120 /tmp/gradle.log 2>/dev/null | tr -cd '[:print:]\n' | head -c 6000 || echo "no log")
+          # Create issue with log (api.github.com allowed)
+          echo "$LOG" | head -n 20
+          gh api repos/${{ github.repository }}/issues -f title="Gradle log ${{ github.sha }}" -f body="$LOG" 2>&1 | head -n 20 || true
 
       - name: Upload gradle log (always)
         if: always()
