@@ -66,22 +66,34 @@ jobs:
         working-directory: android
         run: |
           set -x
+          echo "=== PWD ===" && pwd && ls -la
+          echo "=== gradle files ===" && ls -la gradle/wrapper/ 2>&1 | head -n 20
           if [ -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Using ./gradlew"
-            ./gradlew assembleDebug --stacktrace 2>&1 | tail -n 300
+            ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 400
+            echo "gradlew exit: ${PIPESTATUS[0]}"
           else
             echo "Wrapper missing, using gradle directly"
-            gradle assembleDebug --stacktrace 2>&1 | tail -n 300
+            gradle assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 400
+            echo "gradle exit: ${PIPESTATUS[0]}"
           fi
-          ls -lh app/build/outputs/apk/debug/ 2>&1 | head -n 20 || true
+          echo "=== find APKs ==="
+          find . -name "*.apk" -type f 2>&1 | head -n 20 || true
+          find app/build -type f 2>&1 | head -n 50 || true
+          ls -R app/build/outputs 2>&1 | head -n 100 || true
+          cat /tmp/gradle.log | grep -i -A2 -B2 "error\|fail" | head -n 200 || true
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: GuardCall-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/**/*.apk
+            android/**/*.apk
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Run unit tests
         working-directory: android

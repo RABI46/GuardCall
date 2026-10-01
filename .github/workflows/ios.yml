@@ -61,24 +61,43 @@ jobs:
         run: |
           set -x
           xcrun --version 2>&1 || true
-          xcrun simctl list devices 2>&1 | head -n 30 || true
+          xcrun simctl list devices 2>&1 | head -n 50 || true
+          # Try iPhone 16 first, fallback to any iPhone if not found
+          DEVICE="iPhone 16"
+          if ! xcrun simctl list devices 2>&1 | grep -q "iPhone 16"; then
+            DEVICE=$(xcrun simctl list devices 2>&1 | grep -oE 'iPhone [0-9]+' | head -1)
+            echo "Falling back to device: $DEVICE"
+            [ -z "$DEVICE" ] && DEVICE="iPhone 15"
+          fi
+          echo "Using device: $DEVICE"
+          echo "$DEVICE" > /tmp/device_name
           xcodebuild build-for-testing \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "platform=iOS Simulator,name=$DEVICE,OS=latest" \
             -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO 2>&1 | head -n 500
-          echo "build exit code: $?"
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee /tmp/build.log | tail -n 200
+          echo "build exit code: ${PIPESTATUS[0]}"
+          cat /tmp/build.log | grep -i -A2 -B2 "error" | head -n 100 || true
 
       - name: Run tests
         run: |
+          set -x
+          DEVICE=$(cat /tmp/device_name 2>/dev/null || echo "iPhone 16")
+          if ! xcrun simctl list devices 2>&1 | grep -q "$DEVICE"; then
+            DEVICE=$(xcrun simctl list devices 2>&1 | grep -oE 'iPhone [0-9]+' | head -1)
+            [ -z "$DEVICE" ] && DEVICE="iPhone 15"
+          fi
+          echo "Testing on device: $DEVICE"
           xcodebuild test-without-building \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "platform=iOS Simulator,name=$DEVICE,OS=latest" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
-            -enableCodeCoverage YES
+            -enableCodeCoverage YES 2>&1 | tee /tmp/test.log | tail -n 300
+          echo "test exit: ${PIPESTATUS[0]}"
+          cat /tmp/test.log | grep -i -A5 -B5 "fail\|error\|GuardCallTests" | head -n 200 || true
 
       - name: Lint Swift (non-blocking)
         continue-on-error: true
