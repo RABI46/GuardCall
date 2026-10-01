@@ -1,6 +1,10 @@
 name: Release APK
 
 on:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - ".github/workflows/release.yml"
   workflow_dispatch:
     inputs:
       tag:
