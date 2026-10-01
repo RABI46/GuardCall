@@ -15,9 +15,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
-        run: sudo xcode-select -s /Applications/Xcode_16*.app/Contents/Developer || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen &> /dev/null; then
@@ -41,7 +38,11 @@ jobs:
       - name: Show project info
         run: |
           ls -la
-          xcodebuild -list
+          echo "--- project.yml ---"
+          cat project.yml
+          echo "--- generated ---"
+          ls -la GuardCall.xcodeproj 2>&1 | head -n 20
+          xcodebuild -list -project GuardCall.xcodeproj
 
       - name: Build for testing
         run: |
@@ -50,8 +51,7 @@ jobs:
             -scheme GuardCall \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || cat
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Run tests
         run: |
@@ -61,10 +61,9 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
-            -enableCodeCoverage YES \
-            | xcpretty || cat
+            -enableCodeCoverage YES
 
       - name: Lint Swift (non-blocking)
         continue-on-error: true
         run: |
-          echo "SwiftLint would run here if configured (.swiftlint.yml)"
+          if command -v swiftlint &> /dev/null; then swiftlint --version && swiftlint lint; else echo "SwiftLint not installed — skipping"; fi

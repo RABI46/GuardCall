@@ -14,13 +14,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        continue-on-error: true
+
+      - name: Verify Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls -la $ANDROID_HOME 2>&1 | head -n 40 || ls -la /usr/local/lib/android/sdk 2>&1 | head -n 40
+          which sdkmanager 2>&1 | head
+          sdkmanager --version 2>&1 | head || echo "sdkmanager not in PATH, trying fallback"
+          ls $ANDROID_HOME/cmdline-tools 2>&1 | head -n 20 || true
+          # Accept licenses if sdkmanager available
+          yes | sdkmanager --licenses 2>&1 | tail -n 5 || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -48,11 +60,14 @@ jobs:
             echo "Wrapper jar missing — generation avec Gradle 8.7"
             gradle wrapper --gradle-version 8.7
             ls -lh gradle/wrapper/
+          else
+            echo "Wrapper jar present"
+            ls -lh gradle/wrapper/
           fi
 
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --info
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -60,7 +75,8 @@ jobs:
           name: GuardCall-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
+          if-no-files-found: error
 
       - name: Run unit tests
         working-directory: android
-        run: ./gradlew testDebugUnitTest || echo "no tests yet"
+        run: ./gradlew testDebugUnitTest || echo "no tests yet — ok"
