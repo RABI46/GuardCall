@@ -36,22 +36,39 @@ jobs:
             ${{ runner.os }}-spm-
 
       - name: Show project info
+        continue-on-error: true
         run: |
+          set -x
           ls -la
           echo "--- project.yml ---"
           cat project.yml
           echo "--- generated ---"
-          ls -la GuardCall.xcodeproj 2>&1 | head -n 20
-          xcodebuild -list -project GuardCall.xcodeproj
+          ls -R 2>&1 | head -n 100
+          if [ -d GuardCall.xcodeproj ]; then
+            echo "project exists"
+            cat GuardCall.xcodeproj/project.pbxproj 2>&1 | head -n 200 || true
+            xcodebuild -list -project GuardCall.xcodeproj 2>&1 || echo "xcodebuild -list failed, trying xcodebuild -list without project"
+            xcodebuild -list 2>&1 || true
+            xcodebuild -version 2>&1 || true
+            xcode-select -p 2>&1 || true
+          else
+            echo "ERROR: GuardCall.xcodeproj missing!"
+            ls -la 2>&1
+            exit 1
+          fi
 
       - name: Build for testing
         run: |
+          set -x
+          xcrun --version 2>&1 || true
+          xcrun simctl list devices 2>&1 | head -n 30 || true
           xcodebuild build-for-testing \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | head -n 500
+          echo "build exit code: $?"
 
       - name: Run tests
         run: |

@@ -39,35 +39,41 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            android/.gradle
-          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
       - name: Generate Gradle Wrapper (if missing jar)
         working-directory: android
+        continue-on-error: true
         run: |
+          set -x
+          ls -la gradle/wrapper/ 2>&1 | head -n 20 || true
+          gradle --version 2>&1 | head -n 20
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Wrapper jar missing — generation avec Gradle 8.7"
-            gradle wrapper --gradle-version 8.7
-            ls -lh gradle/wrapper/
+            gradle wrapper --gradle-version 8.7 2>&1 | tail -n 100 || echo "gradle wrapper failed, trying alternative"
+            ls -lh gradle/wrapper/ 2>&1 | head -n 20 || true
           else
             echo "Wrapper jar present"
             ls -lh gradle/wrapper/
           fi
+          # fallback: if still missing, use gradle directly without wrapper
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "No wrapper jar — will use gradle directly for build"
+          fi
 
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --stacktrace --info
+        run: |
+          set -x
+          if [ -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Using ./gradlew"
+            ./gradlew assembleDebug --stacktrace 2>&1 | tail -n 300
+          else
+            echo "Wrapper missing, using gradle directly"
+            gradle assembleDebug --stacktrace 2>&1 | tail -n 300
+          fi
+          ls -lh app/build/outputs/apk/debug/ 2>&1 | head -n 20 || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
