@@ -2,55 +2,100 @@ name: GuardCall
 options:
   bundleIdPrefix: com.guardcall
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "16.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
+  generateEmptyDirectories: true
 
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
-    CODE_SIGN_IDENTITY: ""
-    CODE_SIGNING_REQUIRED: "NO"
-    CODE_SIGNING_ALLOWED: "NO"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    SWIFT_EMIT_LOC_STRINGS: "YES"
+    ENABLE_USER_SCRIPT_SANDBOXING: "YES"
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_COMPILATION_MODE: singlefile
+      GCC_OPTIMIZATION_LEVEL: "0"
+      ENABLE_TESTABILITY: "YES"
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      GCC_OPTIMIZATION_LEVEL: s
+      ENABLE_TESTABILITY: "NO"
 
 targets:
-
   GuardCall:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "16.0"
     sources:
       - path: GuardCall
+        excludes:
+          - PrivacyInfo.xcprivacy
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.app
         INFOPLIST_FILE: GuardCall/Info.plist
         PRODUCT_NAME: GuardCall
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_EMIT_LOC_STRINGS: "YES"
+        CODE_SIGN_STYLE: Automatic
     entitlements:
       path: GuardCall/GuardCall.entitlements
     dependencies:
       - target: GuardCallDirectory
+        embed: true
+        codeSign: true
+    # Privacy manifest is auto-detected if placed in bundle, but we list it
+    # for explicit tracking
 
   GuardCallDirectory:
     type: app-extension
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "16.0"
     sources:
       - path: GuardCallDirectory
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.GuardCallDirectory
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.app.calldirectory
         INFOPLIST_FILE: GuardCallDirectory/Info.plist
         PRODUCT_NAME: GuardCallDirectory
+        CODE_SIGN_STYLE: Automatic
     entitlements:
       path: GuardCallDirectory/GuardCallDirectory.entitlements
 
   GuardCallTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "16.0"
     sources:
       - path: GuardCallTests
     dependencies:
       - target: GuardCall
+    settings:
+      base:
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/GuardCall.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GuardCall"
+
+schemes:
+  GuardCall:
+    build:
+      targets:
+        GuardCall: all
+        GuardCallDirectory: all
+        GuardCallTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - GuardCallTests
+      gatherCoverageData: true
+    archive:
+      config: Release
+    analyze:
+      config: Debug
+    profile:
+      config: Release
