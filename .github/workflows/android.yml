@@ -62,6 +62,13 @@ jobs:
             echo "No wrapper jar — will use gradle directly for build"
           fi
 
+      - name: Validate Gradle project
+        working-directory: android
+        run: |
+          set -x
+          gradle help 2>&1 | head -n 50 || true
+          gradle projects 2>&1 | head -n 50 || true
+
       - name: Build Debug APK
         working-directory: android
         run: |
@@ -80,34 +87,27 @@ jobs:
             GRADLE_EXIT=$?
           fi
           echo ">>> gradle exit: $GRADLE_EXIT"
-          tail -n 600 /tmp/gradle.log || true
+          tail -n 800 /tmp/gradle.log || true
           echo "=== find APKs ==="
           find . -name "*.apk" -type f 2>&1 | head -n 20 || true
           find app/build -type f 2>&1 | head -n 150 || true
           ls -R app/build 2>&1 | head -n 400 || true
-          echo "=== gradle.log errors ==="
+          echo "=== gradle.log errors (filtered) ==="
           grep -i -A6 -B2 "error\|FAILED\|exception\|e:" /tmp/gradle.log | head -n 800 || true
           # also dump to summary
           {
             echo "### Gradle log tail"
             echo '```'
-            tail -n 400 /tmp/gradle.log || true
+            tail -n 500 /tmp/gradle.log || true
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
-          # publish log as commit comment (api.github.com allowed in sandbox)
+          # fail job if gradle failed
           if [ "$GRADLE_EXIT" -ne 0 ]; then
-            LOG_TAIL=$(tail -n 80 /tmp/gradle.log | tr -d '\r' | head -c 5000)
-            # escape for json
-            BODY=$(printf "❌ Gradle failed (exit $GRADLE_EXIT) sur \`\`%s\`\`:\n\`\`\`\n%s\n\`\`\`" "${{ github.sha }}" "$LOG_TAIL" | jq -Rs .)
-            # post via gh api (requires jq)
-            echo "$BODY" | gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -f body="$BODY" 2>&1 | head -n 10 || true
             echo "::error::Gradle build failed with exit $GRADLE_EXIT"
             exit $GRADLE_EXIT
           fi
           if ! find . -name "*.apk" | grep -q .; then
             echo "::error::No APK produced!"
-            # also post
-            tail -n 100 /tmp/gradle.log | head -c 4000 | jq -Rs . | xargs -I{} gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -f body="No APK: {}" 2>&1 | head || true
             exit 1
           fi
 
