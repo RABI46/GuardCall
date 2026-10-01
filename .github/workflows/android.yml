@@ -65,35 +65,59 @@ jobs:
       - name: Build Debug APK
         working-directory: android
         run: |
+          set -o pipefail
           set -x
           echo "=== PWD ===" && pwd && ls -la
-          echo "=== gradle files ===" && ls -la gradle/wrapper/ 2>&1 | head -n 20
+          echo "=== gradle files ===" && ls -la gradle/wrapper/ 2>&1 | head -n 20 || true
           if [ -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Using ./gradlew"
-            ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 400
-            echo "gradlew exit: ${PIPESTATUS[0]}"
+            ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 500
+            GRADLE_EXIT=${PIPESTATUS[0]}
           else
             echo "Wrapper missing, using gradle directly"
-            gradle assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 400
-            echo "gradle exit: ${PIPESTATUS[0]}"
+            gradle assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 500
+            GRADLE_EXIT=${PIPESTATUS[0]}
           fi
+          echo ">>> gradle exit: $GRADLE_EXIT"
           echo "=== find APKs ==="
           find . -name "*.apk" -type f 2>&1 | head -n 20 || true
-          find app/build -type f 2>&1 | head -n 50 || true
-          ls -R app/build/outputs 2>&1 | head -n 100 || true
-          cat /tmp/gradle.log | grep -i -A2 -B2 "error\|fail" | head -n 200 || true
+          find app/build -type f 2>&1 | head -n 100 || true
+          ls -R app/build 2>&1 | head -n 200 || true
+          echo "=== gradle.log errors ==="
+          grep -i -A4 -B2 "error\|FAILED\|exception" /tmp/gradle.log | head -n 300 || true
+          echo "=== full gradle.log tail ==="
+          tail -n 200 /tmp/gradle.log || true
+          # fail job if gradle failed
+          if [ "$GRADLE_EXIT" -ne 0 ]; then
+            echo "Gradle build failed with exit $GRADLE_EXIT"
+            exit $GRADLE_EXIT
+          fi
+          # also fail if no APK
+          if ! find . -name "*.apk" | grep -q .; then
+            echo "ERROR: No APK produced!"
+            cat /tmp/gradle.log | tail -n 100
+            exit 1
+          fi
+
+      - name: Upload gradle log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-log
+          path: /tmp/gradle.log
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload APK
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: GuardCall-debug-apk
           path: |
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/outputs/**/*.apk
-            android/**/*.apk
+            android/**/build/outputs/**/*.apk
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Run unit tests
         working-directory: android
