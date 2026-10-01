@@ -158,7 +158,7 @@ fun MainScreen(store: BlocklistStore) {
                                 Text(e.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        Divider(modifier = Modifier.padding(vertical = 6.dp))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         Text(
                             "Astuce : sur Android, les numéros « identifiés » font vibrer en silencieux au lieu d’être bloqués, pour que vous gardiez la trace.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant

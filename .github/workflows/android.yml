@@ -71,31 +71,36 @@ jobs:
           echo "=== gradle files ===" && ls -la gradle/wrapper/ 2>&1 | head -n 20 || true
           if [ -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Using ./gradlew"
-            ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 500
+            ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 600
             GRADLE_EXIT=${PIPESTATUS[0]}
           else
             echo "Wrapper missing, using gradle directly"
-            gradle assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 500
+            gradle assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log | tail -n 600
             GRADLE_EXIT=${PIPESTATUS[0]}
           fi
           echo ">>> gradle exit: $GRADLE_EXIT"
           echo "=== find APKs ==="
           find . -name "*.apk" -type f 2>&1 | head -n 20 || true
           find app/build -type f 2>&1 | head -n 100 || true
-          ls -R app/build 2>&1 | head -n 200 || true
+          ls -R app/build 2>&1 | head -n 300 || true
           echo "=== gradle.log errors ==="
-          grep -i -A4 -B2 "error\|FAILED\|exception" /tmp/gradle.log | head -n 300 || true
-          echo "=== full gradle.log tail ==="
-          tail -n 200 /tmp/gradle.log || true
+          grep -i -A6 -B2 "error\|FAILED\|exception\|e:" /tmp/gradle.log | head -n 500 || true
+          # also dump to summary
+          echo "### Gradle log tail" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 300 /tmp/gradle.log >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
           # fail job if gradle failed
           if [ "$GRADLE_EXIT" -ne 0 ]; then
-            echo "Gradle build failed with exit $GRADLE_EXIT"
+            echo "::error::Gradle build failed with exit $GRADLE_EXIT"
+            # also annotate with first error
+            ERR=$(grep -m1 -i "error" /tmp/gradle.log | head -c 500)
+            echo "::error::Gradle error: $ERR"
             exit $GRADLE_EXIT
           fi
           # also fail if no APK
           if ! find . -name "*.apk" | grep -q .; then
-            echo "ERROR: No APK produced!"
-            cat /tmp/gradle.log | tail -n 100
+            echo "::error::No APK produced!"
             exit 1
           fi
 
