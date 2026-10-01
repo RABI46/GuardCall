@@ -81,7 +81,6 @@ jobs:
           set -x
           echo "=== PWD ===" && pwd && ls -la
           echo "=== gradle files ===" && ls -la gradle/wrapper/ 2>&1 | head -n 20 || true
-          # Run gradle with log file, without pipe to preserve exit code
           if [ -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Using ./gradlew"
             ./gradlew assembleDebug --stacktrace > /tmp/gradle.log 2>&1
@@ -92,21 +91,23 @@ jobs:
             GRADLE_EXIT=$?
           fi
           echo ">>> gradle exit: $GRADLE_EXIT"
-          tail -n 800 /tmp/gradle.log || true
+          echo "=== HEAD ===" && head -n 150 /tmp/gradle.log || true
+          echo "=== TAIL ===" && tail -n 600 /tmp/gradle.log || true
           echo "=== find APKs ==="
           find . -name "*.apk" -type f 2>&1 | head -n 20 || true
-          find app/build -type f 2>&1 | head -n 150 || true
-          ls -R app/build 2>&1 | head -n 400 || true
-          echo "=== gradle.log errors (filtered) ==="
-          grep -i -A6 -B2 "error\|FAILED\|exception\|e:" /tmp/gradle.log | head -n 800 || true
-          # also dump to summary
+          ls -R app/build 2>&1 | head -n 500 || true
+          echo "=== errors ==="
+          grep -i -n -A8 -B2 "FAILURE\|> Task.*FAILED\|e: \|error:" /tmp/gradle.log | head -n 500 || true
           {
-            echo "### Gradle log tail"
+            echo "### Gradle head"
             echo '```'
-            tail -n 500 /tmp/gradle.log || true
+            head -n 150 /tmp/gradle.log || true
+            echo '```'
+            echo "### Gradle tail"
+            echo '```'
+            tail -n 400 /tmp/gradle.log || true
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
-          # fail job if gradle failed
           if [ "$GRADLE_EXIT" -ne 0 ]; then
             echo "::error::Gradle build failed with exit $GRADLE_EXIT"
             exit $GRADLE_EXIT
@@ -119,17 +120,24 @@ jobs:
       - name: Post log to issue on failure
         if: failure()
         run: |
-          echo "Posting gradle log to issue..."
-          # Prepare log for annotation (single line, %0A for newlines)
+          echo "Posting gradle log..."
           if [ -f /tmp/gradle.log ]; then
-            LOG_ONELINE=$(tail -n 60 /tmp/gradle.log | tr '\n' ' ' | sed 's/\"/\\"/g' | head -c 3000)
-            echo "::error title=Gradle log::$LOG_ONELINE"
-            # Also try to create issue with simpler permissions
-            LOG_SIMPLE=$(tail -n 100 /tmp/gradle.log | tr -cd '[:print:]\n' | head -c 5000)
-            echo "$LOG_SIMPLE" | head -n 30
-            gh api repos/${{ github.repository }}/issues -f title="Gradle log ${{ github.sha }}" -f body="$LOG_SIMPLE" 2>&1 | head -n 20 || echo "issue creation failed (permissions)"
+            echo "=== HEAD 100 ===" 
+            head -n 100 /tmp/gradle.log || true
+            echo "=== GREP errors ==="
+            grep -i -m1 -A15 "FAILURE\|> Task :app.*FAILED\|e: \|error:" /tmp/gradle.log 2>&1 | head -n 50 || true
+            # For annotation, capture first error (not tail)
+            ERR=$(grep -i -m1 -A8 "FAILURE\|e: \|error:" /tmp/gradle.log 2>&1 | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 3000)
+            if [ -z "$ERR" ]; then
+              ERR=$(head -n 40 /tmp/gradle.log | tr '\n' ' ' | head -c 3000)
+            fi
+            echo "::error title=Gradle log::$ERR"
+            LOG_SIMPLE=$(grep -i -A10 "FAILURE\|e: \|error:" /tmp/gradle.log 2>&1 | head -n 80 | tr -cd '[:print:]\n' | head -c 6000)
+            if [ -z "$LOG_SIMPLE" ]; then LOG_SIMPLE=$(head -n 80 /tmp/gradle.log | head -c 6000); fi
+            echo "$LOG_SIMPLE" | head -n 40
+            gh api repos/${{ github.repository }}/issues -f title="Gradle failure ${{ github.sha }}" -f body="$LOG_SIMPLE" 2>&1 | head -n 20 || echo "issue creation failed"
           else
-            echo "::error::No gradle log found at /tmp/gradle.log"
+            echo "::error::No gradle log found"
           fi
 
       - name: Upload gradle log (always)
