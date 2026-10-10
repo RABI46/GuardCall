@@ -365,7 +365,9 @@ private extension PhoneNumber {
 
 extension CXCallDirectoryManager {
     /// Variante `async` de `getEnabledStatusForExtension`, absente de l'API.
-    func enabledStatus(forExtensionWithIdentifier identifier: String) async throws -> CXCallDirectoryEnabledStatus {
+    /// `CXCallDirectoryManager.EnabledStatus` est le nom Swift actuel de
+    /// l'ancien `CXCallDirectoryEnabledStatus` (renommé dans le SDK Xcode 16).
+    func enabledStatus(forExtensionWithIdentifier identifier: String) async throws -> CXCallDirectoryManager.EnabledStatus {
         try await withCheckedThrowingContinuation { continuation in
             getEnabledStatusForExtension(withIdentifier: identifier) { status, error in
                 if let error {
