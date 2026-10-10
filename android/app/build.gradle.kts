@@ -26,6 +26,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
@@ -52,7 +53,7 @@ android {
         // `NewApi` en erreur bloquante : c'est ce contrôle qui aurait détecté
         // l'appel à setSilenceCall (API 29) avec minSdk 26.
         abortOnError = true
-        warningsAsErrors = false
+        warningsAsErrors = true
         checkReleaseBuilds = true
         lintConfig = file("lint.xml")
     }
