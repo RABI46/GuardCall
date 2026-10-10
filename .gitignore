@@ -1,56 +1,4 @@
-# XcodeGen
-*.xcodeproj/
-project.xcworkspace/
-
-# Xcode
-DerivedData/
-*.xcuserdata/
-*.xcuserstate/
-*.xccheckout
-*.moved-aside
-*.pbxuser
-!default.pbxuser
-*.mode1v3
-!default.mode1v3
-*.mode2v3
-!default.mode2v3
-*.perspectivev3
-!default.perspectivev3
-xcuserdata/
-*.hmap
-*.ipa
-*.dSYM.zip
-*.dSYM
-
-# Swift Package Manager
-.swiftpm/
-Package.resolved
-
-# CocoaPods
-Pods/
-Podfile.lock
-
-# Carthage
-Carthage/Build/
-
-# fastlane
-fastlane/report.xml
-fastlane/Preview.html
-fastlane/screenshots
-fastlane/test_output
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-Icon
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Android (GuardCall Android)
+# Android
 android/.gradle/
 android/build/
 android/app/build/
@@ -60,16 +8,18 @@ android/local.properties
 *.apk
 *.aab
 
-# Misc
+# macOS / IDE
+.DS_Store
+Thumbs.db
+.idea/
 *.log
 *~
+
+# Secrets and local configuration
 .env
 
-# Analysis reports (keep tracked version if needed)
-# ANALYSIS.md kept for reference
-
-# APK publié par la CI (ajouté avec `git add -f` par android.yml)
+# APK publié par la CI
 dist/
 
-# Logs de build poussés par la CI en cas d échec (diagnostic)
+# Logs de build poussés par la CI en cas d'échec
 ci-logs/

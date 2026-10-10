@@ -1,99 +1,67 @@
-# GuardCall
+# GuardCall Android
 
-Application de **blocage et identification d'appels indésirables**, disponible sur **iOS (CallKit)** et **Android (CallScreeningService)**. Une même logique métier — liste de numéros locale, normalisation E.164, tri croissant, déduplication — déclinée sur les deux plateformes.
+GuardCall est une application Android moderne pour filtrer les appels indésirables. Son interface s'inspire de l'expérience simple de [Saracroche](https://codeberg.org/cbouvat/saracroche-android), avec une identité visuelle GuardCall personnalisée : palette indigo et menthe, cartes Material 3, thème clair/sombre et activation guidée du service système.
 
-| Plateforme | Stack | Cible minimale | Statut |
-|---|---|---|---|
-| **iOS** | Swift 5.10 · SwiftUI · CallKit `CXCallDirectoryProvider` | iOS 16 · Xcode 16 | build + tests en CI |
-| **Android** | Kotlin 1.9 · Jetpack Compose Material 3 · `CallScreeningService` | API 26 (Android 8) | APK debug signé, tests + lint en CI |
+## Fonctionnalités
 
-Aucune donnée ne quitte l'appareil : la liste est stockée dans l'App Group (iOS) ou dans le stockage privé de l'app (Android).
+- **Blocage à la demande** : ajoutez un numéro et empêchez ses appels d'arriver jusqu'à vous.
+- **Filtrage système** via `CallScreeningService` (Android 8.0+, API 26).
+- **Activation guidée** du rôle `ROLE_CALL_SCREENING` sur Android 10+.
+- **Normalisation des numéros** : formats nationaux français, `+33` et préfixe `00` sont convertis en E.164.
+- **Correspondance stricte** : aucun blocage par suffixe, afin d'éviter les faux positifs.
+- **Stockage local** : la liste reste dans le stockage privé de l'appareil, sans permission dangereuse.
+- **Interface Jetpack Compose Material 3** : cartes de statut, statistiques, FAB d'ajout et formulaire en bottom sheet.
+- **Thème personnalisé** : mode clair et sombre avec une palette GuardCall indigo, menthe et corail.
 
----
+## Stack
+
+- Kotlin 1.9 · Jetpack Compose · Material 3
+- Android Gradle Plugin 8.3 · Gradle 8.7
+- SDK de compilation 34 · Android minimum API 26
+- Gson pour la sérialisation locale
 
 ## Structure
 
-```
-├── Shared/                     # Code Swift compilé dans l'app ET l'extension
-│   ├── Models.swift            #   payload, invariant tri + déduplication
-│   ├── PhoneNumber.swift       #   normalisation / validation E.164
-│   ├── BlocklistStore.swift    #   persistance App Group
-│   ├── DirectorySnapshot.swift #   deltas pour rechargement incrémental
-│   └── Constants.swift         #   identifiants et clés
-├── GuardCall/                  # App iOS (SwiftUI)
-├── GuardCallDirectory/         # Extension Call Directory iOS
-├── GuardCallTests/             # Tests unitaires iOS (logique partagée)
-├── android/                    # App Android (Kotlin / Compose)
-│   └── app/src/test/           # Tests unitaires JVM (normalisation, matching)
-├── project.yml                 # Spécification XcodeGen
-└── .github/workflows/          # CI iOS, Android, release
+```text
+android/
+  app/src/main/java/com/guardcall/
+    MainActivity.kt
+    data/                         # Modèles, stockage et correspondance
+    screening/                    # Service Android de filtrage d'appels
+    ui/screens/MainScreen.kt      # Écran Compose GuardCall
+    ui/theme/                     # Palette, typographie et thème clair/sombre
+    util/                         # Normalisation des numéros
+  app/src/test/                   # Tests JVM de la logique métier
 ```
 
-Côté iOS, le `.xcodeproj` n'est **pas** commité : il est généré depuis `project.yml`.
+Le dépôt est volontairement **Android uniquement**.
 
----
+## Construire l'APK
 
-## Démarrage rapide
-
-### iOS
-
-**Prérequis :** Xcode 16+, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
-
-```bash
-xcodegen generate
-open GuardCall.xcodeproj        # schéma « GuardCall »
-```
-
-Puis, sur simulateur ou appareil :
-
-```bash
-xcodebuild test -project GuardCall.xcodeproj -scheme GuardCall \
-  -destination 'platform=iOS Simulator,name=iPhone 16' -enableCodeCoverage YES
-```
-
-Activation : **Réglages → Téléphone → Blocage d'appels et identification → GuardCall**, puis « Recharger l'extension » dans l'app.
-
-### Android
-
-Le wrapper Gradle est complet (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`) :
+Prérequis : JDK 17 et Android SDK 34, avec `ANDROID_HOME` configuré ou un fichier `android/local.properties`.
 
 ```bash
 cd android
 ./gradlew testDebugUnitTest lintDebug assembleDebug
-# APK -> android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Prérequis :** JDK 17, SDK Android 34 (`ANDROID_HOME` renseigné).
+L'APK de debug est généré dans `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-### Installer l'APK
+Pour l'installer sur un appareil :
 
-1. Récupérez `GuardCall-<version>-debug.apk` — onglet **Actions → Android CI → GuardCall-debug-apk**, ou dans la [release](../../releases), ou dans `dist/` sur la branche.
-2. Transférez-le sur l'appareil et ouvrez-le (autorisez « Sources inconnues »).
-3. Lancez GuardCall, touchez **Activer** et sélectionnez GuardCall comme application de filtrage d'appels (rôle système `ROLE_CALL_SCREENING`).
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-> L'APK publié est un build **debug** : il est signé avec la clé de debug Android et s'installe normalement, mais il n'est pas destiné au Play Store (qui exige un AAB signé en release).
+Puis ouvrez GuardCall, touchez **Activer la protection** et sélectionnez GuardCall comme service de filtrage d'appels.
 
----
+## Sécurité et confidentialité
 
-## Comportement
-
-| Situation | iOS | Android |
-|---|---|---|
-| Numéro **bloqué** | appel masqué par CallKit | appel rejeté, sans sonnerie ni notification |
-| Numéro **identifié** | étiquette affichée à l'appel | appel laissé passant, sonnerie coupée (Android 10+) |
-| Numéro inconnu | appel normal | appel normal |
-
-Les numéros sont saisis au format national (`01 40 85 55 12`) ou international (`+33140855512`) et **toujours** normalisés en E.164 avant stockage. La correspondance est une égalité stricte sur le E.164 normalisé — jamais une comparaison de suffixe, qui bloquerait des numéros par accident.
-
----
+GuardCall ne demande pas l'accès aux contacts, au journal d'appels ou à l'état du téléphone. Le rôle système de filtrage est accordé explicitement par l'utilisateur et la liste des numéros est enregistrée dans `files/blocklist.json`.
 
 ## CI
 
-| Workflow | Déclencheur | Garanties |
-|---|---|---|
-| `iOS CI` | push `main`/`arena/**`, PR vers `main` | XcodeGen → build → tests sur simulateur → SwiftLint. `set -o pipefail` partout : un échec de `xcodebuild` fait échouer l'étape |
-| `Android CI` | push `main`/`arena/**`, PR vers `main` | tests unitaires → `lintDebug` (bloquant) → APK → publication dans `dist/` + release |
-| `Release APK` | `workflow_dispatch`, release publiée | APK attaché à un tag dérivé de `versionName` |
+Les workflows GitHub Actions exécutent les tests JVM, Android Lint et la construction de l'APK debug. Le workflow de release permet de construire et d'attacher l'APK à une release.
 
 ## Licence
 

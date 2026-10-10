@@ -10,8 +10,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Service de filtrage d'appels Android — équivalent du `CallDirectoryHandler`
- * iOS.
+ * Service Android de filtrage d'appels entrants.
  *
  * Deux points corrigés par rapport à la version initiale :
  * 1. `setSilenceCall` n'existe qu'à partir de l'**API 29** alors que `minSdk`

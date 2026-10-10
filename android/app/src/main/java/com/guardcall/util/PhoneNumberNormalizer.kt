@@ -1,10 +1,9 @@
 package com.guardcall.util
 
 /**
- * Normalisation E.164 des numéros de téléphone — miroir exact de
- * `Shared/PhoneNumber.swift` côté iOS.
+ * Normalisation E.164 des numéros de téléphone.
  *
- * Les deux plateformes stockent et comparent des E.164 (chiffres seuls,
+ * GuardCall stocke et compare des E.164 (chiffres seuls,
  * indicatif pays inclus, jamais de 0 initial). Un numéro national saisi
  * (« 01 40 85 55 12 ») est converti avec l'indicatif pays par défaut.
  */
