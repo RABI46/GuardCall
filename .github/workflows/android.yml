@@ -17,11 +17,11 @@ concurrency:
 jobs:
   build:
     name: Tests + Lint + APK debug
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -32,7 +32,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
@@ -80,7 +80,7 @@ jobs:
           echo "- \`android/$APK\` — $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: GuardCall-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
@@ -88,23 +88,12 @@ jobs:
           if-no-files-found: error
 
       - name: Publish actionable Android diagnostics
-        if: failure()
-        run: |
-          set -euo pipefail
-          # Keep errors accessible through the Checks API, even when log/artifact
-          # download hosts are unavailable to the development environment.
-          python3 - <<'PYCODE'
-          import glob, re
-          for path in glob.glob('/tmp/android-*.log'):
-              for line in open(path):
-                  if re.search(r'^e: |error:|^> .*failed|Execution failed for task|What went wrong:', line):
-                      text = line.strip().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-                      print(f'::error title=Android CI::{text[:2000]}')
-          PYCODE
+        if: always()
+        run: python3 scripts/android_ci_report.py
 
       - name: Upload unit test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: android-unit-tests
           path: |
@@ -115,10 +104,12 @@ jobs:
 
       - name: Upload lint report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: android-lint-report
-          path: android/app/build/reports/lint-results-debug.html
+          path: |
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/lint-results-debug.xml
           retention-days: 7
           if-no-files-found: warn
 

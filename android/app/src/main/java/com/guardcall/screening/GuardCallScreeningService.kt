@@ -27,7 +27,7 @@ class GuardCallScreeningService : CallScreeningService() {
     override fun onScreenCall(callDetails: Call.Details) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
             callDetails.callDirection != Call.Details.DIRECTION_INCOMING) {
-            safeRespond(callDetails, CallResponse.Builder().build())
+            // The framework itself completes outgoing-call screening after this callback.
             return
         }
         val fallback = Runnable {
@@ -80,7 +80,7 @@ class GuardCallScreeningService : CallScreeningService() {
                 CallAction.ALLOW -> Unit
             }
         }.build()
-        // respondToCall's binder adapter is main-thread managed (cleared on unbind).
+        // respondToCall uses the framework's main-thread-managed binder adapter.
         if (safeRespond(details, response) && record) {
             val entry = HistoryEntry(timestamp = System.currentTimeMillis(), number = decision.number,
                 action = decision.action, reason = decision.reason)
