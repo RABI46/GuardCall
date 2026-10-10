@@ -70,3 +70,6 @@ android/local.properties
 
 # APK publié par la CI (ajouté avec `git add -f` par android.yml)
 dist/
+
+# Logs de build poussés par la CI en cas d échec (diagnostic)
+ci-logs/
