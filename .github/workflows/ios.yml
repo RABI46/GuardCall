@@ -97,17 +97,30 @@ jobs:
       # l'étape est celui de `tail`, donc 0 même quand xcodebuild échoue.
       - name: Build for testing
         run: |
-          set -euo pipefail
+          set -uo pipefail
           xcodebuild build-for-testing \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
             -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.device }},OS=latest" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee /tmp/build.log | tail -n 200
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo "--- erreurs de compilation ---"
+            grep -E "error:" /tmp/build.log | sort -u | head -n 40 || true
+            ERR=$(grep -E "error:" /tmp/build.log | sort -u | head -n 6 | tr '\n' '|' | tr -d '"' | head -c 900)
+            echo "::error title=Build iOS en échec (exit $STATUS)::$ERR"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : build en échec sur ${GITHUB_SHA}" \
+              -f body="$(printf '```\n%s\n```\n' "$(grep -B2 -A4 -E 'error:' /tmp/build.log | head -n 80)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run tests
         run: |
-          set -euo pipefail
+          set -uo pipefail
           xcodebuild test-without-building \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
@@ -115,6 +128,19 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             -enableCodeCoverage YES 2>&1 | tee /tmp/test.log | tail -n 300
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo "--- tests en échec ---"
+            grep -E "error:|failed|XCTAssert" /tmp/test.log | sort -u | head -n 40 || true
+            ERR=$(grep -E "error:|XCTAssert.*failed" /tmp/test.log | sort -u | head -n 6 | tr '\n' '|' | tr -d '"' | head -c 900)
+            echo "::error title=Tests iOS en échec (exit $STATUS)::$ERR"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : tests en échec sur ${GITHUB_SHA}" \
+              -f body="$(printf '```\n%s\n```\n' "$(grep -E 'error:|failed|XCTAssert' /tmp/test.log | sort -u | head -n 60)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test summary
         if: always()

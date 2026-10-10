@@ -35,8 +35,8 @@ final class CallDirectoryHandler: CXCallDirectoryProvider {
             context.completeRequest()
             let blocked = payload.blockingNumbersAscending.count
             let identified = payload.identificationEntriesAscending.count
-            logger.info("GuardCall: annuaire appliqué — \(blocked) bloqués, \(identified) identifiés, "
-                        + "incremental=\(context.isIncremental)")
+            let incremental = context.isIncremental
+            logger.info("GuardCall: annuaire appliqué — \(blocked) bloqués, \(identified) identifiés, incremental=\(incremental)")
         } catch {
             logger.error("GuardCall: échec beginRequest — \(error.localizedDescription, privacy: .public)")
             context.cancelRequest(withError: error)
@@ -81,9 +81,11 @@ final class CallDirectoryHandler: CXCallDirectoryProvider {
             context.addIdentificationEntry(withNextSequentialPhoneNumber: number, label: label)
         }
 
-        logger.info("GuardCall: delta incrémental — "
-                    + "+\(delta.blockedToAdd.count)/-\(delta.blockedToRemove.count) bloqués, "
-                    + "+\(delta.identifiedToAdd.count)/-\(delta.identifiedToRemove.count) identifiés")
+        let addBlocked = delta.blockedToAdd.count
+        let removeBlocked = delta.blockedToRemove.count
+        let addIdentified = delta.identifiedToAdd.count
+        let removeIdentified = delta.identifiedToRemove.count
+        logger.info("GuardCall: delta — +\(addBlocked)/-\(removeBlocked) bloqués, +\(addIdentified)/-\(removeIdentified) identifiés")
     }
 }
 

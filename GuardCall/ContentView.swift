@@ -378,6 +378,10 @@ extension CXCallDirectoryManager {
     }
 }
 
-#Preview {
-    ContentView()
+/// `#Preview` exige iOS 17 ; la cible du projet est iOS 16, d'où un
+/// `PreviewProvider` classique (déprécié mais disponible depuis iOS 13).
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 }
