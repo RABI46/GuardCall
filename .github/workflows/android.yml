@@ -32,7 +32,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
@@ -44,16 +44,6 @@ jobs:
           ./gradlew --version
           echo "ANDROID_HOME=${ANDROID_HOME:-<vide>}"
           ls -l gradle/wrapper/
-          # Expose available stable platform 37 before choosing a newer target.
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' | sort -V | tail -1)
-          test -n "$SDKMANAGER" || { echo "::error::sdkmanager introuvable"; exit 1; }
-          "$SDKMANAGER" --list > /tmp/android-sdk-platforms.txt
-          python3 - <<'PYCODE'
-          from pathlib import Path
-          lines = [line.strip() for line in Path('/tmp/android-sdk-platforms.txt').read_text().splitlines()
-                   if 'platforms;android-37' in line or 'platforms;android-36' in line]
-          print('::notice title=Android SDK platforms::' + '%0A'.join(lines))
-          PYCODE
 
       - name: Unit tests
         working-directory: android

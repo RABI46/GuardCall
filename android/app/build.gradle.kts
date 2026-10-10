@@ -1,11 +1,13 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.guardcall"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
 
     defaultConfig {
         applicationId = "com.guardcall.app"
@@ -13,7 +15,7 @@ android {
         // Les APIs plus récentes (setSilenceCall, API 29) sont gardées par
         // Build.VERSION.SDK_INT dans GuardCallScreeningService.
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 3
         versionName = "2.0"
 
@@ -37,17 +39,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 
     packaging {
