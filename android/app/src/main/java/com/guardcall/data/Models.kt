@@ -14,9 +14,35 @@ data class IdentificationEntry(
     val label: String
 )
 
+/**
+ * Plage de numéros bloqués — modèle de la liste Begone (`+33162######`).
+ *
+ * `#` est le joker Begone : il vaut pour un chiffre quelconque. Une règle ne
+ * retient donc qu'un **préfixe E.164 et une longueur totale** : les dizaines de
+ * millions de numéros couverts par Begone-FR ne sont jamais matérialisés, ni en
+ * mémoire ni dans `blocklist.json` (18 règles suffisent).
+ *
+ * Le test d'appartenance est exact (`length` + `startsWith`) : contrairement à
+ * l'ancienne correspondance par suffixe, bloquer la plage `33162` (11 chiffres)
+ * ne bloque aucun numéro d'une autre longueur ni d'un autre préfixe.
+ */
+data class BlockRule(
+    val prefix: String,
+    val length: Int,
+    val label: String? = null,
+    val source: String? = null
+) {
+    /** Clé de déduplication — propriété de corps : exclue d'`equals`/`copy`. */
+    val key: String get() = "$prefix:$length"
+
+    /** Vrai si `e164` (déjà normalisé) appartient à la plage. */
+    fun matches(e164: String): Boolean = e164.length == length && e164.startsWith(prefix)
+}
+
 data class BlocklistPayload(
     val blocked: List<BlockedEntry> = emptyList(),
-    val identified: List<IdentificationEntry> = emptyList()
+    val identified: List<IdentificationEntry> = emptyList(),
+    val rules: List<BlockRule> = emptyList()
 ) {
     companion object {
         /**
@@ -37,9 +63,11 @@ data class BlocklistPayload(
     fun sanitized(): BlocklistPayload {
         val numericOrder = compareBy<BlockedEntry>({ it.phoneNumber.length }, { it.phoneNumber })
         val identifiedOrder = compareBy<IdentificationEntry>({ it.phoneNumber.length }, { it.phoneNumber })
+        val rulesOrder = compareBy<BlockRule>({ it.length }, { it.prefix })
         return copy(
             blocked = blocked.distinctBy { it.phoneNumber }.sortedWith(numericOrder),
-            identified = identified.distinctBy { it.phoneNumber }.sortedWith(identifiedOrder)
+            identified = identified.distinctBy { it.phoneNumber }.sortedWith(identifiedOrder),
+            rules = effectiveRules.distinctBy { it.key }.sortedWith(rulesOrder)
         )
     }
 
@@ -54,10 +82,21 @@ data class BlocklistPayload(
         },
         identified = identified.mapNotNull { entry ->
             PhoneNumberNormalizer.normalize(entry.phoneNumber)?.let { entry.copy(phoneNumber = it) }
-        }
+        },
+        rules = effectiveRules
     ).sanitized()
 
-    val isEmpty: Boolean get() = blocked.isEmpty() && identified.isEmpty()
+    /**
+     * Règles de plage, **jamais null**.
+     *
+     * Gson n'appelle pas forcément le constructeur Kotlin : un `blocklist.json`
+     * écrit avant l'introduction des règles laisse le champ à `null`, ce qui
+     * lèverait un NPE sur un type déclaré non nullable. `orEmpty()` couvre les
+     * deux chemins de désérialisation.
+     */
+    val effectiveRules: List<BlockRule> get() = rules.orEmpty()
+
+    val isEmpty: Boolean get() = blocked.isEmpty() && identified.isEmpty() && effectiveRules.isEmpty()
 }
 
 /** Résultat explicite d'une mutation de la liste — jamais d'erreur silencieuse. */

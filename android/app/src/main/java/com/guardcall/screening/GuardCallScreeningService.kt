@@ -38,10 +38,15 @@ class GuardCallScreeningService : CallScreeningService() {
             val blocked = BlocklistMatcher.isBlocked(incomingNumber, payload)
             val label = BlocklistMatcher.identificationLabel(incomingNumber, payload)
 
+            // Le motif n'est utile que si l'appel est bloqué : il évite de
+            // reparcourir les règles pour rien sur un appel légitime.
+            val reason = if (blocked) BlocklistMatcher.blockingLabel(incomingNumber, payload) else null
+
             Log.i(
                 TAG,
-                "Appel entrant ${mask(incomingNumber)} | blocked=$blocked label=$label | " +
-                    "bloqués=${payload.blocked.size} identifiés=${payload.identified.size}"
+                "Appel entrant ${mask(incomingNumber)} | blocked=$blocked motif=$reason " +
+                    "label=$label | bloqués=${payload.blocked.size} " +
+                    "plages=${payload.effectiveRules.size} identifiés=${payload.identified.size}"
             )
 
             val response = CallResponse.Builder().apply {
@@ -97,6 +102,6 @@ class GuardCallScreeningService : CallScreeningService() {
     }
 
     private companion object {
-        const val TAG = "GuardCallScreening"
+        const val TAG = "OnraccrocheScreening"
     }
 }
