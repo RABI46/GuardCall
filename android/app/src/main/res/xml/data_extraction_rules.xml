@@ -2,8 +2,14 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="guardcall_prefs_fallback.xml" />
+        <exclude domain="file" path="call_history.json" />
+        <exclude domain="file" path="call_history.json.tmp" />
+        <exclude domain="file" path="blocklist.v1.bak" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="guardcall_prefs_fallback.xml" />
+        <exclude domain="file" path="call_history.json" />
+        <exclude domain="file" path="call_history.json.tmp" />
+        <exclude domain="file" path="blocklist.v1.bak" />
     </device-transfer>
 </data-extraction-rules>

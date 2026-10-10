@@ -73,3 +73,7 @@ dist/
 
 # Logs de build poussés par la CI en cas d échec (diagnostic)
 ci-logs/
+
+# Python tooling
+__pycache__/
+*.py[cod]

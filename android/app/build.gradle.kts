@@ -1,11 +1,13 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.guardcall"
-    compileSdk = 34
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
 
     defaultConfig {
         applicationId = "com.guardcall.app"
@@ -13,9 +15,9 @@ android {
         // Les APIs plus récentes (setSilenceCall, API 29) sont gardées par
         // Build.VERSION.SDK_INT dans GuardCallScreeningService.
         minSdk = 26
-        targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        targetSdk = 37
+        versionCode = 3
+        versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -24,6 +26,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
@@ -37,17 +40,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 
     packaging {
@@ -58,7 +53,7 @@ android {
         // `NewApi` en erreur bloquante : c'est ce contrôle qui aurait détecté
         // l'appel à setSilenceCall (API 29) avec minSdk 26.
         abortOnError = true
-        warningsAsErrors = false
+        warningsAsErrors = true
         checkReleaseBuilds = true
         lintConfig = file("lint.xml")
     }

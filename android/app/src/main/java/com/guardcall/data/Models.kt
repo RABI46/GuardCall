@@ -8,6 +8,13 @@ data class BlockedEntry(
     val label: String? = null
 )
 
+data class AllowedEntry(val phoneNumber: String, val label: String? = null)
+
+data class ProtectionSettings(
+    val enabled: Boolean = true,
+    val historyEnabled: Boolean = true
+)
+
 /** Numéro identifié (étiqueté) mais non bloqué. */
 data class IdentificationEntry(
     val phoneNumber: String,
@@ -42,7 +49,10 @@ data class BlockRule(
 data class BlocklistPayload(
     val blocked: List<BlockedEntry> = emptyList(),
     val identified: List<IdentificationEntry> = emptyList(),
-    val rules: List<BlockRule> = emptyList()
+    val rules: List<BlockRule> = emptyList(),
+    val allowed: List<AllowedEntry> = emptyList(),
+    val settings: ProtectionSettings = ProtectionSettings(),
+    val schemaVersion: Int = 2
 ) {
     companion object {
         /**
@@ -67,7 +77,9 @@ data class BlocklistPayload(
         return copy(
             blocked = blocked.distinctBy { it.phoneNumber }.sortedWith(numericOrder),
             identified = identified.distinctBy { it.phoneNumber }.sortedWith(identifiedOrder),
-            rules = effectiveRules.distinctBy { it.key }.sortedWith(rulesOrder)
+            rules = effectiveRules.distinctBy { it.key }.sortedWith(rulesOrder),
+            allowed = allowed.distinctBy { it.phoneNumber }
+                .sortedWith(compareBy({ it.phoneNumber.length }, { it.phoneNumber }))
         )
     }
 
@@ -83,7 +95,11 @@ data class BlocklistPayload(
         identified = identified.mapNotNull { entry ->
             PhoneNumberNormalizer.normalize(entry.phoneNumber)?.let { entry.copy(phoneNumber = it) }
         },
-        rules = effectiveRules
+        rules = effectiveRules,
+        allowed = allowed.mapNotNull { entry ->
+            PhoneNumberNormalizer.normalize(entry.phoneNumber)?.let { entry.copy(phoneNumber = it) }
+        },
+        settings = settings
     ).sanitized()
 
     /**
@@ -96,7 +112,7 @@ data class BlocklistPayload(
      */
     val effectiveRules: List<BlockRule> get() = rules.orEmpty()
 
-    val isEmpty: Boolean get() = blocked.isEmpty() && identified.isEmpty() && effectiveRules.isEmpty()
+    val isEmpty: Boolean get() = blocked.isEmpty() && identified.isEmpty() && effectiveRules.isEmpty() && allowed.isEmpty()
 }
 
 /** Résultat explicite d'une mutation de la liste — jamais d'erreur silencieuse. */

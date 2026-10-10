@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <exclude domain="sharedpref" path="guardcall_prefs_fallback.xml" />
+    <exclude domain="file" path="call_history.json" />
+    <exclude domain="file" path="call_history.json.tmp" />
+    <exclude domain="file" path="blocklist.v1.bak" />
 </full-backup-content>

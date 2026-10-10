@@ -17,11 +17,11 @@ concurrency:
 jobs:
   build:
     name: Tests + Lint + APK debug
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -32,7 +32,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
@@ -49,7 +49,7 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          ./gradlew testDebugUnitTest --stacktrace
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee /tmp/android-tests.log
           echo "### Résultats des tests unitaires" >> "$GITHUB_STEP_SUMMARY"
           find app/build/test-results -name "*.xml" -print0 2>/dev/null \
             | xargs -0 -r grep -h "<testsuite " \
@@ -62,13 +62,13 @@ jobs:
           set -euo pipefail
           # `NewApi` en erreur bloquante : c'est ce contrôle qui détecte un appel
           # à une API plus récente que minSdk.
-          ./gradlew lintDebug --stacktrace
+          ./gradlew lintDebug --stacktrace 2>&1 | tee /tmp/android-lint.log
 
       - name: Build debug APK
         working-directory: android
         run: |
           set -euo pipefail
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/android-apk.log
           APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
           if [ -z "$APK" ]; then
             echo "::error::Aucun APK produit"
@@ -80,19 +80,36 @@ jobs:
           echo "- \`android/$APK\` — $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: GuardCall-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: error
 
+      - name: Publish actionable Android diagnostics
+        if: always()
+        run: python3 scripts/android_ci_report.py
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-unit-tests
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Upload lint report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: android-lint-report
-          path: android/app/build/reports/lint-results-debug.html
+          path: |
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/lint-results-debug.xml
           retention-days: 7
           if-no-files-found: warn
 

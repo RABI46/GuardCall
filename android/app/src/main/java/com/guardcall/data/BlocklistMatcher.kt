@@ -1,5 +1,7 @@
 package com.guardcall.data
 
+import com.guardcall.domain.CallAction
+import com.guardcall.domain.RuleEngine
 import com.guardcall.util.PhoneNumberNormalizer
 
 /**
@@ -19,9 +21,7 @@ import com.guardcall.util.PhoneNumberNormalizer
 object BlocklistMatcher {
 
     fun isBlocked(incoming: String?, payload: BlocklistPayload): Boolean {
-        val normalized = PhoneNumberNormalizer.normalize(incoming) ?: return false
-        return payload.blocked.any { PhoneNumberNormalizer.normalize(it.phoneNumber) == normalized } ||
-            matchesRule(normalized, payload.effectiveRules)
+        return RuleEngine(payload.normalized()).evaluate(incoming).action == CallAction.BLOCK
     }
 
     fun identificationLabel(incoming: String?, payload: BlocklistPayload): String? {
@@ -36,6 +36,7 @@ object BlocklistMatcher {
      * l'appelant n'est pas bloqué. Sert à l'affichage et au journal.
      */
     fun blockingLabel(incoming: String?, payload: BlocklistPayload): String? {
+        if (!isBlocked(incoming, payload)) return null
         val normalized = PhoneNumberNormalizer.normalize(incoming) ?: return null
         return payload.blocked
             .firstOrNull { PhoneNumberNormalizer.normalize(it.phoneNumber) == normalized }
