@@ -26,16 +26,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AddModerator
-import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -239,7 +235,7 @@ fun MainScreen(store: BlocklistStore) {
                         modifier = Modifier.weight(1f),
                         value = payload.blocked.size.toString(),
                         label = "Numéros bloqués",
-                        icon = Icons.Rounded.Block,
+                        icon = Icons.Rounded.Phone,
                         accent = GuardCallPrimary
                     )
                     StatCard(
@@ -418,9 +414,9 @@ private fun ProtectionStatusCard(
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = if (isEnabled) {
-                                Icons.Rounded.VerifiedUser
+                                Icons.Rounded.CheckCircle
                             } else {
-                                Icons.Rounded.Error
+                                Icons.Rounded.Warning
                             },
                             contentDescription = null,
                             modifier = Modifier.size(30.dp),
@@ -476,7 +472,7 @@ private fun ProtectionStatusCard(
                         contentColor = MaterialTheme.colorScheme.onError
                     )
                 ) {
-                    Icon(Icons.Rounded.AddModerator, contentDescription = null)
+                    Icon(Icons.Rounded.Settings, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Activer la protection", fontWeight = FontWeight.Bold)
                 }
@@ -713,7 +709,7 @@ private fun BlockedNumberCard(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.Rounded.Block,
+                        imageVector = Icons.Rounded.Phone,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -927,7 +923,7 @@ private fun AddNumberSheet(
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 } else {
-                    Icon(Icons.Rounded.Block, contentDescription = null)
+                    Icon(Icons.Rounded.Phone, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Bloquer")
                 }
