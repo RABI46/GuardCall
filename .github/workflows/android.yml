@@ -1,0 +1,165 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ "main", "arena/**" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Tests + Lint + APK debug
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Show toolchain
+        working-directory: android
+        run: |
+          set -euo pipefail
+          java -version
+          ./gradlew --version
+          echo "ANDROID_HOME=${ANDROID_HOME:-<vide>}"
+          ls -l gradle/wrapper/
+
+      - name: Unit tests
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest --stacktrace
+          echo "### Résultats des tests unitaires" >> "$GITHUB_STEP_SUMMARY"
+          find app/build/test-results -name "*.xml" -print0 2>/dev/null \
+            | xargs -0 -r grep -h "<testsuite " \
+            | sed -E 's/.*name="([^"]+)".*tests="([0-9]+)".*failures="([0-9]+)".*/- \1 : \2 tests, \3 échec(s)/' \
+            >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Android Lint (bloquant)
+        working-directory: android
+        run: |
+          set -euo pipefail
+          # `NewApi` en erreur bloquante : c'est ce contrôle qui détecte un appel
+          # à une API plus récente que minSdk.
+          ./gradlew lintDebug --stacktrace
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug --stacktrace
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::Aucun APK produit"
+            exit 1
+          fi
+          # Chemin ABSOLU : les étapes suivantes ne s'exécutent pas dans android/.
+          echo "APK=$GITHUB_WORKSPACE/android/$APK" >> "$GITHUB_ENV"
+          echo "### APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`android/$APK\` — $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuardCall-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-report
+          path: android/app/build/reports/lint-results-debug.html
+          retention-days: 7
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # Publication : l'APK est commité dans `dist/` puis attaché à une
+      # release. Nécessaire parce que les environnements sans accès aux hôtes
+      # de téléchargement GitHub ne peuvent pas récupérer l'artefact autrement.
+      # ------------------------------------------------------------------
+      - name: Resolve version and stage APK
+        id: stage
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/arena/')
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -oE 'versionName = "[^"]+"' android/app/build.gradle.kts | cut -d'"' -f2)
+          test -n "$VERSION" || { echo "::error::versionName introuvable"; exit 1; }
+          test -f "$APK" || { echo "::error::APK introuvable : $APK"; exit 1; }
+
+          NAME="GuardCall-${VERSION}-debug.apk"
+          mkdir -p dist
+          cp "$APK" "dist/$NAME"
+          ls -lh "dist/$NAME"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Commit APK to dist/
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/arena/')
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Un APK debug n'est pas reproductible (horodatages) : comparer les
+          # octets ajouterait ~8 Mo à l'historique à chaque run. On ne committe
+          # donc qu'une seule fois par version.
+          if git ls-files --error-unmatch "dist/${{ steps.stage.outputs.name }}" >/dev/null 2>&1; then
+            echo "dist/${{ steps.stage.outputs.name }} déjà versionné pour cette version — aucun commit"
+            exit 0
+          fi
+
+          git add -f "dist/${{ steps.stage.outputs.name }}"
+          if git diff --cached --quiet; then
+            echo "APK inchangé, aucun commit"
+            exit 0
+          fi
+          git commit -m "chore(release): APK debug ${{ steps.stage.outputs.version }} [skip ci]"
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+          echo "APK commité dans dist/"
+
+      - name: Attach APK to GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/arena/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.stage.outputs.tag }}"
+          NAME="${{ steps.stage.outputs.name }}"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "GuardCall ${TAG}" \
+              --target "$GITHUB_SHA" \
+              --notes "APK debug installable, construit par la CI depuis ${GITHUB_SHA}."
+          fi
+          gh release upload "$TAG" "dist/$NAME" --clobber
+          echo "### Publication" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release [\`${TAG}\`](https://github.com/${{ github.repository }}/releases/tag/${TAG})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Asset \`${NAME}\`" >> "$GITHUB_STEP_SUMMARY"

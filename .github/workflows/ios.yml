@@ -1,44 +1,204 @@
-name: iOS starter workflow
+name: iOS CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "arena/**" ]
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
-    name: Build and Test default scheme using any available iPhone simulator
-    runs-on: macos-latest
+  build-and-test:
+    name: Build & Test (XcodeGen + Simulator)
+    # macos-15 : Xcode 16.x. Sur macos-14 le Xcode par défaut est 15.4, incapable
+    # de lire un projet généré pour `xcodeVersion: "16.0"` (xcodebuild renvoie
+    # alors EX_IOERR / 74 : « Unable to read project »).
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Set Default Scheme
+
+      - name: Select Xcode 16
         run: |
-          scheme_list=$(xcodebuild -list -json | tr -d "\n")
-          default=$(echo $scheme_list | ruby -e "require 'json'; puts JSON.parse(STDIN.gets)['project']['targets'][0]")
-          echo $default | cat >default
-          echo Using default scheme: $default
-      - name: Build
+          set -euo pipefail
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$XCODE" ]; then XCODE="/Applications/Xcode.app"; fi
+          echo "DEVELOPER_DIR=$XCODE/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Xcode retenu : $XCODE"
+          DEVELOPER_DIR="$XCODE/Contents/Developer" xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -uo pipefail
+          xcodegen generate --spec project.yml > /tmp/xcodegen.log 2>&1
+          STATUS=$?
+          echo "--- sortie xcodegen ---"
+          cat /tmp/xcodegen.log
+          if [ "$STATUS" -ne 0 ]; then
+            # Les logs Actions ne sont pas toujours récupérables : l'erreur est
+            # republiée en annotation ET dans une issue.
+            SHORT=$(tail -n 3 /tmp/xcodegen.log | tr '\n' ' ' | tr -d '"' | head -c 400)
+            echo "::error title=XcodeGen a échoué (exit $STATUS)::$SHORT"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : xcodegen échoue sur ${GITHUB_SHA}" \
+              -f body="$(printf '```\n%s\n```\n' "$(tail -n 60 /tmp/xcodegen.log)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
+          test -d GuardCall.xcodeproj || { echo "::error::GuardCall.xcodeproj manquant"; exit 1; }
         env:
-          scheme: ${{ 'default' }}
-          platform: ${{ 'iOS Simulator' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Inspect generated project
         run: |
-          # xcrun xctrace returns via stderr, not the expected stdout (see https://developer.apple.com/forums/thread/663959)
-          device=`xcrun xctrace list devices 2>&1 | grep -oE 'iPhone.*?[^\(]+' | head -1 | awk '{$1=$1;print}' | sed -e "s/ Simulator$//"`
-          if [ $scheme = default ]; then scheme=$(cat default); fi
-          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
-          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
-          xcodebuild build-for-testing -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -destination "platform=$platform,name=$device"
-      - name: Test
+          set -uo pipefail
+          xcodebuild -list -project GuardCall.xcodeproj > /tmp/list.log 2>&1
+          STATUS=$?
+          cat /tmp/list.log
+          if [ "$STATUS" -ne 0 ]; then
+            SHORT=$(tail -n 3 /tmp/list.log | tr '\n' ' ' | tr -d '"' | head -c 400)
+            echo "::error title=xcodebuild -list a échoué (exit $STATUS)::$SHORT"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : projet illisible sur ${GITHUB_SHA}" \
+              -f body="$(printf 'Xcode : %s\n\n```\n%s\n```\n' "$(xcodebuild -version | head -1)" "$(tail -n 60 /tmp/list.log)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
         env:
-          scheme: ${{ 'default' }}
-          platform: ${{ 'iOS Simulator' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Select simulator
+        id: simulator
         run: |
-          # xcrun xctrace returns via stderr, not the expected stdout (see https://developer.apple.com/forums/thread/663959)
-          device=`xcrun xctrace list devices 2>&1 | grep -oE 'iPhone.*?[^\(]+' | head -1 | awk '{$1=$1;print}' | sed -e "s/ Simulator$//"`
-          if [ $scheme = default ]; then scheme=$(cat default); fi
-          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
-          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
-          xcodebuild test-without-building -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -destination "platform=$platform,name=$device"
+          set -euo pipefail
+          DEVICE="iPhone 16"
+          if ! xcrun simctl list devices available | grep -q "$DEVICE"; then
+            DEVICE=$(xcrun simctl list devices available | grep -oE 'iPhone [0-9]+' | head -1)
+            [ -n "$DEVICE" ] || DEVICE="iPhone 15"
+          fi
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
+          echo "Simulateur retenu : $DEVICE"
+
+      # `set -o pipefail` est indispensable : sans lui, le code de sortie de
+      # l'étape est celui de `tail`, donc 0 même quand xcodebuild échoue.
+      - name: Build for testing
+        run: |
+          set -uo pipefail
+          xcodebuild build-for-testing \
+            -project GuardCall.xcodeproj \
+            -scheme GuardCall \
+            -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.device }},OS=latest" \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee /tmp/build.log | tail -n 200
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo "--- erreurs de compilation ---"
+            grep -E "error:" /tmp/build.log | sort -u | head -n 40 || true
+            ERR=$(grep -E "error:" /tmp/build.log | sort -u | head -n 6 | tr '\n' '|' | tr -d '"' | head -c 900)
+            echo "::error title=Build iOS en échec (exit $STATUS)::$ERR"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : build en échec sur ${GITHUB_SHA}" \
+              -f body="$(printf '```\n%s\n```\n' "$(grep -B2 -A4 -E 'error:' /tmp/build.log | head -n 80)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests
+        run: |
+          set -uo pipefail
+          xcodebuild test-without-building \
+            -project GuardCall.xcodeproj \
+            -scheme GuardCall \
+            -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.device }},OS=latest" \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            -enableCodeCoverage YES 2>&1 | tee /tmp/test.log | tail -n 300
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo "--- tests en échec ---"
+            grep -E "error:|failed|XCTAssert" /tmp/test.log | sort -u | head -n 40 || true
+            ERR=$(grep -E "error:|XCTAssert.*failed" /tmp/test.log | sort -u | head -n 6 | tr '\n' '|' | tr -d '"' | head -c 900)
+            echo "::error title=Tests iOS en échec (exit $STATUS)::$ERR"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : tests en échec sur ${GITHUB_SHA}" \
+              -f body="$(printf '```\n%s\n```\n' "$(grep -E 'error:|failed|XCTAssert' /tmp/test.log | sort -u | head -n 60)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish build log on failure
+        if: failure()
+        run: |
+          set -uo pipefail
+          mkdir -p ci-logs
+          {
+            echo "# Logs CI iOS — ${GITHUB_SHA}"
+            echo
+            echo "## Erreurs de build"
+            echo
+            echo '```'
+            grep -E "error:|\\*\\* BUILD|\\*\\* TEST" /tmp/build.log 2>/dev/null | sort -u | head -n 80
+            echo '```'
+            echo
+            echo "## Résultat des tests"
+            echo
+            echo '```'
+            grep -E "Test Case|Test Suite|Executed [0-9]+ test|error:|failed|XCTAssert|Testing failed|\\*\\* TEST" /tmp/test.log 2>/dev/null | sort -u | head -n 200
+            echo '```'
+            echo
+            echo "## Fin du log de test"
+            echo
+            echo '```'
+            tail -n 120 /tmp/test.log 2>/dev/null
+            echo '```'
+          } > ci-logs/ios-build.log.md
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f ci-logs/ios-build.log.md
+          git commit -m "chore(ci): log de build iOS en échec [skip ci]" || exit 0
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME" || git rebase --abort || true
+          git push origin "HEAD:$GITHUB_REF_NAME" || echo "::warning::push du log impossible"
+
+      - name: Test summary
+        if: always()
+        run: |
+          set -uo pipefail
+          {
+            echo "### Tests iOS"
+            echo '```'
+            grep -E "Test Suite|Test Case.*(passed|failed)|Executed [0-9]+ test" /tmp/test.log 2>/dev/null \
+              | tail -n 60 || echo "aucune sortie de test"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install SwiftLint
+        run: |
+          set -euo pipefail
+          if ! command -v swiftlint >/dev/null 2>&1; then
+            brew install swiftlint
+          fi
+          swiftlint version
+
+      # Bloquant sur les erreurs SwiftLint (les avertissements restent visibles
+      # dans le log sans faire échouer le build).
+      - name: SwiftLint
+        run: |
+          set -euo pipefail
+          swiftlint lint --reporter github-actions-logging
