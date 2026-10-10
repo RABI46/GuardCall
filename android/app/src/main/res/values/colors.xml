@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#1E5B7A</color>
+    <!-- Bleu-blanc-rouge : mêmes valeurs que ui/theme/Theme.kt (Compose). -->
+    <color name="primary">#002395</color>
+    <color name="onPrimary">#FFFFFF</color>
+    <color name="primaryVariant">#0055A4</color>
+
+    <color name="secondary">#ED2939</color>
+    <color name="onSecondary">#FFFFFF</color>
+
+    <color name="white">#FFFFFF</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="onSurface">#1A1C1E</color>
+
+    <color name="error">#BA1A1A</color>
 </resources>

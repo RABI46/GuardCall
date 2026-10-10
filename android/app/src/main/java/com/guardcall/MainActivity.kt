@@ -9,14 +9,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.guardcall.data.BlocklistStore
 import com.guardcall.ui.screens.MainScreen
-import com.guardcall.ui.theme.GuardCallTheme
+import com.guardcall.ui.theme.OnraccrocheTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val store = BlocklistStore(this)
         setContent {
-            GuardCallTheme {
+            OnraccrocheTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     MainScreen(store = store)
                 }

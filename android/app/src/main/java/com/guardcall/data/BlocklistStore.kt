@@ -104,6 +104,58 @@ class BlocklistStore(private val context: Context) {
         saveNow(current.copy(blocked = current.blocked.filterNot { it.phoneNumber == e164 }))
     }
 
+    // MARK: - Listes de plages (Begone)
+
+    /**
+     * Importe les plages de la liste Begone-FR embarquée dans les assets.
+     *
+     * L'import est **additif et idempotent** : les règles déjà présentes ne sont
+     * pas dupliquées (déduplication sur [BlockRule.key]). Les numéros saisis à
+     * la main et les numéros identifiés sont préservés.
+     */
+    suspend fun importBegoneList(): MutationResult = withContext(Dispatchers.IO) {
+        val parsed = try {
+            context.assets.open(BegoneListParser.SOURCE_BEGONE_FR).use {
+                BegoneListParser.parse(it)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Lecture de ${BegoneListParser.SOURCE_BEGONE_FR} impossible", e)
+            return@withContext MutationResult.StorageFailure(
+                "Liste Begone illisible : ${e.message}"
+            )
+        }
+
+        if (parsed.isEmpty()) {
+            return@withContext MutationResult.StorageFailure(
+                "Aucune règle exploitable dans ${BegoneListParser.SOURCE_BEGONE_FR}"
+            )
+        }
+
+        val current = loadNow()
+        val merged = (current.effectiveRules + parsed).distinctBy { it.key }
+        val result = saveNow(current.copy(rules = merged))
+        if (result is MutationResult.Success) {
+            Log.i(
+                TAG,
+                "Liste Begone importée : +${merged.size - current.effectiveRules.size} " +
+                    "plage(s), total ${merged.size}"
+            )
+        }
+        result
+    }
+
+    /** Retire les plages issues de la liste Begone, sans toucher aux autres. */
+    suspend fun clearBegoneList(): MutationResult = withContext(Dispatchers.IO) {
+        val current = loadNow()
+        saveNow(
+            current.copy(
+                rules = current.effectiveRules.filterNot {
+                    it.source == BegoneListParser.SOURCE_BEGONE_FR
+                }
+            )
+        )
+    }
+
     suspend fun addIdentification(rawNumber: String, label: String): MutationResult =
         withContext(Dispatchers.IO) {
             when (val validation = com.guardcall.util.PhoneNumberNormalizer.validate(rawNumber)) {

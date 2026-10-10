@@ -75,6 +75,7 @@ fun MainScreen(store: BlocklistStore) {
     var showAddDialog by remember { mutableStateOf(false) }
     var newNumber by remember { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
+    var isImportingBegone by remember { mutableStateOf(false) }
 
     fun refresh() {
         scope.launch {
@@ -99,7 +100,7 @@ fun MainScreen(store: BlocklistStore) {
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("GuardCall", fontWeight = FontWeight.Bold) },
+                title = { Text("Onraccroche", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -138,12 +139,12 @@ fun MainScreen(store: BlocklistStore) {
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "GuardCall",
+                            "Onraccroche",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Protection anti-spam pour vos appels",
+                            "On raccroche à votre place : anti-démarchage pour vos appels",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -176,8 +177,8 @@ fun MainScreen(store: BlocklistStore) {
                         }
                         if (!isScreeningRoleHeld) {
                             Text(
-                                "Android exige que GuardCall soit autorisée comme service de filtrage. " +
-                                    "Touchez « Activer » et sélectionnez GuardCall.",
+                                "Android exige qu’Onraccroche soit autorisée comme service de " +
+                                    "filtrage. Touchez « Activer » et sélectionnez Onraccroche.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -210,6 +211,70 @@ fun MainScreen(store: BlocklistStore) {
                                 OutlinedButton(onClick = {
                                     context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
                                 }) { Text("Ouvrir paramètres") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Liste Begone (anti-démarchage)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Bloque d’un coup les plages attribuées au démarchage commercial " +
+                                "en France (0162, 0163, 0270, 0271, 0377, 0378, 0424, 0425, " +
+                                "0568, 0569, 0948, 0949…). Les plages sont enregistrées comme " +
+                                "règles de préfixe : les numéros ne sont jamais énumérés, " +
+                                "l’empreinte mémoire reste celle de 18 règles.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        val rules = payload.effectiveRules
+                        Text(
+                            if (rules.isEmpty()) "Liste non importée" else "${rules.size} plages actives",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = if (rules.isEmpty()) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        isImportingBegone = true
+                                        val result = store.importBegoneList()
+                                        result.errorMessageOrNull?.let {
+                                            snackbarHostState.showSnackbar(it)
+                                        }
+                                        payload = store.load()
+                                        isImportingBegone = false
+                                    }
+                                },
+                                enabled = !isImportingBegone
+                            ) {
+                                Text(if (isImportingBegone) "Import…" else "Importer")
+                            }
+                            if (rules.isNotEmpty()) {
+                                OutlinedButton(onClick = {
+                                    scope.launch {
+                                        val result = store.clearBegoneList()
+                                        result.errorMessageOrNull?.let {
+                                            snackbarHostState.showSnackbar(it)
+                                        }
+                                        payload = store.load()
+                                    }
+                                }) { Text("Retirer") }
                             }
                         }
                     }
