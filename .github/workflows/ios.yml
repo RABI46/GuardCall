@@ -148,16 +148,24 @@ jobs:
           set -uo pipefail
           mkdir -p ci-logs
           {
-            echo "# Log de build iOS — ${GITHUB_SHA}"
+            echo "# Logs CI iOS — ${GITHUB_SHA}"
+            echo
+            echo "## Erreurs de build"
             echo
             echo '```'
-            grep -E "error:|warning: .*(deprecated|never used)|\\*\\* BUILD|\\*\\* TEST|Testing failed" /tmp/build.log 2>/dev/null | sort -u | head -n 120
+            grep -E "error:|\\*\\* BUILD|\\*\\* TEST" /tmp/build.log 2>/dev/null | sort -u | head -n 80
             echo '```'
             echo
-            echo "## Fin du log"
+            echo "## Résultat des tests"
             echo
             echo '```'
-            tail -n 200 /tmp/build.log 2>/dev/null
+            grep -E "Test Case|Test Suite|Executed [0-9]+ test|error:|failed|XCTAssert|Testing failed|\\*\\* TEST" /tmp/test.log 2>/dev/null | sort -u | head -n 200
+            echo '```'
+            echo
+            echo "## Fin du log de test"
+            echo
+            echo '```'
+            tail -n 120 /tmp/test.log 2>/dev/null
             echo '```'
           } > ci-logs/ios-build.log.md
           git config user.name  "github-actions[bot]"

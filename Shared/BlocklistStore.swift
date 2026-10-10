@@ -112,6 +112,17 @@ final class BlocklistStore {
            let snapshot = try? JSONDecoder().decode(DirectorySnapshot.self, from: data) {
             return snapshot
         }
+        if let defaults = groupDefaults,
+           let data = defaults.data(forKey: Constants.Storage.snapshotKey),
+           let snapshot = try? JSONDecoder().decode(DirectorySnapshot.self, from: data) {
+            return snapshot
+        }
+        #if DEBUG
+        if let data = UserDefaults.standard.data(forKey: Constants.Storage.snapshotKey),
+           let snapshot = try? JSONDecoder().decode(DirectorySnapshot.self, from: data) {
+            return snapshot
+        }
+        #endif
         return .empty
     }
 
@@ -124,11 +135,14 @@ final class BlocklistStore {
         }
         guard let url = snapshotURL else {
             #if DEBUG
+            groupDefaults?.set(data, forKey: Constants.Storage.snapshotKey)
+            UserDefaults.standard.set(data, forKey: Constants.Storage.snapshotKey)
             return
             #else
             throw BlocklistError.containerUnavailable
             #endif
         }
+        groupDefaults?.set(data, forKey: Constants.Storage.snapshotKey)
         try writeAtomically(data: data, to: url)
     }
 

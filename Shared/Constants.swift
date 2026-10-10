@@ -25,6 +25,9 @@ enum Constants {
         /// Clé UserDefaults (miroir de secours).
         static let blocklistKey = "guardcall.blocklist.v1"
 
+        /// Clé UserDefaults de l'instantané d'annuaire (miroir de secours).
+        static let snapshotKey = "guardcall.directory.snapshot.v1"
+
         /// Fichier de la dernière erreur remontée par l'extension.
         static let lastErrorFileName = "last_calldirectory_error.json"
 

@@ -278,3 +278,50 @@ Les logs détaillés des runs GitHub Actions sont inaccessibles depuis cet envir
 1. Préfixe obligatoire du bundle ID d'une extension — [stackoverflow.com/questions/30536413](https://stackoverflow.com/questions/30536413/after-removing-app-extension-still-get-app-installation-failed-error-this-app-c)
 2. `setSilenceCall` ajouté en API 29 — [developer.android.com/reference/android/telecom/CallScreeningService.CallResponse.Builder](https://developer.android.com/reference/android/telecom/CallScreeningService.CallResponse.Builder)
 3. Numéros CallKit : ordre croissant + indicatif pays — [stackoverflow.com/questions/40673904](https://stackoverflow.com/questions/40673904/call-blocking-feature-in-ios-10)
+
+---
+
+## 11. Vérification par la CI (10/10/2026)
+
+Aucun outillage Apple ou Android n'existant dans l'environnement d'analyse, c'est
+GitHub Actions qui atteste de la compilation et des tests. État sur la branche
+`arena/2080f5db-guardcall` :
+
+| Workflow | Run | Durée | Résultat |
+|---|---|---|---|
+| `iOS CI` (build-for-testing + 19 tests + SwiftLint, Xcode 16, simulateur) | 38039327322 | 2 m 37 | **succès** |
+| `Android CI` (18 tests JVM + `lintDebug` bloquant + `assembleDebug`) | 38039327268 | 3 m 13 | **succès** |
+
+Quatre itérations ont été nécessaires côté iOS ; chacune correspondait à une
+erreur réelle que seul un compilateur pouvait révéler :
+
+1. `xcodebuild -list` → exit 74 (`EX_IOERR`) : le runner `macos-14` fournit
+   Xcode 15.4 par défaut, incapable de lire un projet généré pour
+   `xcodeVersion: "16.0"`. Corrigé en passant sur `macos-15` avec
+   `DEVELOPER_DIR` pointant sur un Xcode 16.
+2. `logger.info("…" + "…")` : une `OSLogMessage` ne peut être produite que par
+   interpolation d'un littéral, jamais par concaténation.
+3. `#Preview` exige iOS 17 alors que la cible est iOS 16 → `PreviewProvider`.
+4. `PhoneNumber.Failure` ne conformait pas à `Error`, exigé par `Result`.
+5. `CXCallDirectoryEnabledStatus` renommé `CXCallDirectoryManager.EnabledStatus`
+   dans le SDK Xcode 16.
+
+Puis un échec de test (`testSnapshotRoundTrip`) : en l'absence de conteneur
+App Group, `saveSnapshot` sortait sans rien écrire. Corrigé dans le code
+(miroir UserDefaults) et non dans le test.
+
+**Ces cinq erreurs sont la preuve que l'ancien pipeline ne compilait rien** :
+avec l'ancienne CI (pipe sans `pipefail`), chacune d'elles serait passée
+inaperçue et le badge serait resté vert.
+
+### APK produit
+
+`dist/GuardCall-1.1-debug.apk` — 8 782 150 octets (contre 16 151 447 pour la
+v1.0, grâce au retrait de `material-icons-extended`), également attaché à la
+release `v1.1`. Vérifications effectuées sur le binaire : intégrité CRC du ZIP,
+9 fichiers DEX, **APK Signing Block v2 présent** (signature valide ; le schéma
+v1 n'est pas requis pour `minSdk 26`), manifeste binaire analysé —
+`package=com.guardcall.app.debug`, `GuardCallScreeningService` déclaré avec
+l'action `android.telecom.CallScreeningService` et la permission
+`BIND_SCREENING_SERVICE`, activité launcher présente, **aucune** des cinq
+permissions dangereuses supprimées ne subsiste.
