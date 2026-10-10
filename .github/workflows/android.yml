@@ -49,7 +49,7 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          ./gradlew testDebugUnitTest --stacktrace
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee /tmp/android-tests.log
           echo "### Résultats des tests unitaires" >> "$GITHUB_STEP_SUMMARY"
           find app/build/test-results -name "*.xml" -print0 2>/dev/null \
             | xargs -0 -r grep -h "<testsuite " \
@@ -62,13 +62,13 @@ jobs:
           set -euo pipefail
           # `NewApi` en erreur bloquante : c'est ce contrôle qui détecte un appel
           # à une API plus récente que minSdk.
-          ./gradlew lintDebug --stacktrace
+          ./gradlew lintDebug --stacktrace 2>&1 | tee /tmp/android-lint.log
 
       - name: Build debug APK
         working-directory: android
         run: |
           set -euo pipefail
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/android-apk.log
           APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
           if [ -z "$APK" ]; then
             echo "::error::Aucun APK produit"
@@ -86,6 +86,32 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: error
+
+      - name: Publish actionable Android diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+          # Keep errors accessible through the Checks API, even when log/artifact
+          # download hosts are unavailable to the development environment.
+          python3 - <<'PYCODE'
+          import glob, re
+          for path in glob.glob('/tmp/android-*.log'):
+              for line in open(path):
+                  if re.search(r'^e: |error:|^> .*failed|Execution failed for task|What went wrong:', line):
+                      text = line.strip().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f'::error title=Android CI::{text[:2000]}')
+          PYCODE
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-tests
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload lint report
         if: always()

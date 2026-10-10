@@ -1,181 +1,71 @@
 package com.guardcall.data
 
 import android.content.Context
-import android.util.Log
-import com.google.gson.Gson
+import com.guardcall.util.PhoneNumberNormalizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/**
- * Persistance de la liste des numéros.
- *
- * Le **fichier JSON est l'unique source de vérité**. Une précédente version
- * écrivait dans DataStore + fichier + SharedPreferences et lisait des sources
- * différentes selon l'appelant (`load()` lisait DataStore, `loadSync()` le
- * fichier) : l'UI et le service de filtrage pouvaient donc diverger. Les échecs
- * d'écriture ne sont plus avalés — ils remontent en [MutationResult.StorageFailure].
- *
- * Toutes les méthodes `suspend` déplacent l'E/S sur [Dispatchers.IO] ;
- * [loadNow] et [saveNow] sont synchrones et doivent être appelées hors thread
- * principal (c'est ce que fait le service de filtrage via son propre executor).
- */
-class BlocklistStore(private val context: Context) {
+class BlocklistStore(context: Context) {
+    private val appContext = context.applicationContext
+    private val repository = JsonFileRepository(File(appContext.filesDir, BLOCKLIST_FILE))
 
-    private val gson = Gson()
-
-    private val blocklistFile: File
-        get() = File(context.filesDir, BLOCKLIST_FILE)
-
-    // MARK: - Lecture
-
-    /** Synchrone — à n'appeler que hors thread principal. */
-    fun loadNow(): BlocklistPayload {
-        val file = blocklistFile
-        if (!file.exists()) return BlocklistPayload.EMPTY
-
-        val payload = try {
-            gson.fromJson(file.readText(), BlocklistPayload::class.java)
-        } catch (e: Exception) {
-            Log.e(TAG, "Liste illisible ($file) — liste vide utilisée", e)
-            null
-        } ?: return BlocklistPayload.EMPTY
-
-        // Les données héritées peuvent contenir des numéros au format national :
-        // on les renormalise au chargement pour que la comparaison E.164 fonctionne.
-        return payload.normalized()
-    }
-
+    fun loadNow(): BlocklistPayload = repository.load()
     suspend fun load(): BlocklistPayload = withContext(Dispatchers.IO) { loadNow() }
 
-    // MARK: - Écriture
+    private suspend fun mutate(transform: (BlocklistPayload) -> BlocklistPayload): MutationResult =
+        withContext(Dispatchers.IO) { repository.update(transform) }
 
-    /** Synchrone — à n'appeler que hors thread principal. */
-    fun saveNow(payload: BlocklistPayload): MutationResult {
-        val sanitized = payload.sanitized()
-        val encoded = try {
-            gson.toJson(sanitized)
-        } catch (e: Exception) {
-            Log.e(TAG, "Encodage JSON impossible", e)
-            return MutationResult.StorageFailure("Encodage de la liste impossible : ${e.message}")
+    private suspend fun withNumber(raw: String, transform: (BlocklistPayload, String) -> BlocklistPayload): MutationResult =
+        when (val validation = PhoneNumberNormalizer.validate(raw)) {
+            is PhoneNumberNormalizer.Result.Invalid -> MutationResult.InvalidNumber(validation.message)
+            is PhoneNumberNormalizer.Result.Valid -> mutate { transform(it, validation.e164) }
         }
 
-        val target = blocklistFile
-        val temp = File(target.parentFile, "${target.name}.tmp")
-        return try {
-            temp.writeText(encoded)
-            if (target.exists() && !target.delete()) {
-                Log.w(TAG, "Ancien fichier non supprimable, écriture directe")
-                target.writeText(encoded)
-            } else if (!temp.renameTo(target)) {
-                target.writeText(encoded)
-            }
-            MutationResult.Success(sanitized)
-        } catch (e: Exception) {
-            Log.e(TAG, "Échec d'écriture de $target", e)
-            runCatching { temp.delete() }
-            MutationResult.StorageFailure("Enregistrement impossible : ${e.message}")
+    suspend fun addBlocked(rawNumber: String, label: String? = null): MutationResult = withNumber(rawNumber) { p, n ->
+        p.copy(blocked = p.blocked.filterNot { it.phoneNumber == n } + BlockedEntry(n, label))
+    }
+    suspend fun removeBlocked(number: String): MutationResult = mutate { p ->
+        p.copy(blocked = p.blocked.filterNot { it.phoneNumber == number })
+    }
+    suspend fun addAllowed(rawNumber: String, label: String? = null): MutationResult = withNumber(rawNumber) { p, n ->
+        p.copy(allowed = p.allowed.filterNot { it.phoneNumber == n } + AllowedEntry(n, label))
+    }
+    suspend fun removeAllowed(number: String): MutationResult = mutate { p ->
+        p.copy(allowed = p.allowed.filterNot { it.phoneNumber == number })
+    }
+    suspend fun addIdentification(rawNumber: String, label: String): MutationResult = withNumber(rawNumber) { p, n ->
+        p.copy(identified = p.identified.filterNot { it.phoneNumber == n } + IdentificationEntry(n, label))
+    }
+    suspend fun removeIdentification(number: String): MutationResult = mutate { p ->
+        p.copy(identified = p.identified.filterNot { it.phoneNumber == number })
+    }
+    suspend fun setProtection(enabled: Boolean): MutationResult = mutate { it.copy(settings = it.settings.copy(enabled = enabled)) }
+    suspend fun setHistory(enabled: Boolean): MutationResult = mutate { it.copy(settings = it.settings.copy(historyEnabled = enabled)) }
+
+    suspend fun addRange(pattern: String, label: String?): MutationResult {
+        val rule = BegoneListParser.toBlockRule(pattern, label)
+            ?: return MutationResult.InvalidNumber("Utilisez un préfixe international suivi de #, par exemple +33162######.")
+        return mutate { p ->
+            val existing = p.effectiveRules.firstOrNull { it.key == rule.key }
+            p.copy(rules = p.effectiveRules.filterNot { it.key == rule.key } + rule.copy(source = existing?.source))
         }
     }
+    suspend fun removeRange(key: String): MutationResult = mutate { p -> p.copy(rules = p.effectiveRules.filterNot { it.key == key }) }
 
-    suspend fun save(payload: BlocklistPayload): MutationResult =
-        withContext(Dispatchers.IO) { saveNow(payload) }
-
-    // MARK: - Mutations
-
-    suspend fun addBlocked(rawNumber: String, label: String? = null): MutationResult =
-        withContext(Dispatchers.IO) {
-            when (val validation = com.guardcall.util.PhoneNumberNormalizer.validate(rawNumber)) {
-                is com.guardcall.util.PhoneNumberNormalizer.Result.Invalid ->
-                    MutationResult.InvalidNumber(validation.message)
-
-                is com.guardcall.util.PhoneNumberNormalizer.Result.Valid -> {
-                    val current = loadNow()
-                    if (current.blocked.any { it.phoneNumber == validation.e164 }) {
-                        return@withContext MutationResult.Duplicate(current)
-                    }
-                    saveNow(current.copy(blocked = current.blocked + BlockedEntry(validation.e164, label)))
-                }
-            }
-        }
-
-    suspend fun removeBlocked(e164: String): MutationResult = withContext(Dispatchers.IO) {
-        val current = loadNow()
-        saveNow(current.copy(blocked = current.blocked.filterNot { it.phoneNumber == e164 }))
-    }
-
-    // MARK: - Listes de plages (Begone)
-
-    /**
-     * Importe les plages de la liste Begone-FR embarquée dans les assets.
-     *
-     * L'import est **additif et idempotent** : les règles déjà présentes ne sont
-     * pas dupliquées (déduplication sur [BlockRule.key]). Les numéros saisis à
-     * la main et les numéros identifiés sont préservés.
-     */
     suspend fun importBegoneList(): MutationResult = withContext(Dispatchers.IO) {
         val parsed = try {
-            context.assets.open(BegoneListParser.SOURCE_BEGONE_FR).use {
-                BegoneListParser.parse(it)
-            }
+            appContext.assets.open(BegoneListParser.SOURCE_BEGONE_FR).use { BegoneListParser.parse(it) }
         } catch (e: Exception) {
-            Log.e(TAG, "Lecture de ${BegoneListParser.SOURCE_BEGONE_FR} impossible", e)
-            return@withContext MutationResult.StorageFailure(
-                "Liste Begone illisible : ${e.message}"
-            )
+            return@withContext MutationResult.StorageFailure("Liste Begone illisible : ${e.message}")
         }
-
-        if (parsed.isEmpty()) {
-            return@withContext MutationResult.StorageFailure(
-                "Aucune règle exploitable dans ${BegoneListParser.SOURCE_BEGONE_FR}"
-            )
-        }
-
-        val current = loadNow()
-        val merged = (current.effectiveRules + parsed).distinctBy { it.key }
-        val result = saveNow(current.copy(rules = merged))
-        if (result is MutationResult.Success) {
-            Log.i(
-                TAG,
-                "Liste Begone importée : +${merged.size - current.effectiveRules.size} " +
-                    "plage(s), total ${merged.size}"
-            )
-        }
-        result
+        if (parsed.isEmpty()) return@withContext MutationResult.StorageFailure("Aucune plage exploitable.")
+        // Existing custom labels/source win on collisions, making removal predictable.
+        repository.update { it.copy(rules = (it.effectiveRules + parsed).distinctBy { r -> r.key }) }
+    }
+    suspend fun clearBegoneList(): MutationResult = mutate { p ->
+        p.copy(rules = p.effectiveRules.filterNot { it.source == BegoneListParser.SOURCE_BEGONE_FR })
     }
 
-    /** Retire les plages issues de la liste Begone, sans toucher aux autres. */
-    suspend fun clearBegoneList(): MutationResult = withContext(Dispatchers.IO) {
-        val current = loadNow()
-        saveNow(
-            current.copy(
-                rules = current.effectiveRules.filterNot {
-                    it.source == BegoneListParser.SOURCE_BEGONE_FR
-                }
-            )
-        )
-    }
-
-    suspend fun addIdentification(rawNumber: String, label: String): MutationResult =
-        withContext(Dispatchers.IO) {
-            when (val validation = com.guardcall.util.PhoneNumberNormalizer.validate(rawNumber)) {
-                is com.guardcall.util.PhoneNumberNormalizer.Result.Invalid ->
-                    MutationResult.InvalidNumber(validation.message)
-
-                is com.guardcall.util.PhoneNumberNormalizer.Result.Valid -> {
-                    val current = loadNow()
-                    saveNow(
-                        current.copy(
-                            identified = current.identified.filterNot { it.phoneNumber == validation.e164 } +
-                                IdentificationEntry(validation.e164, label)
-                        )
-                    )
-                }
-            }
-        }
-
-    companion object {
-        private const val TAG = "BlocklistStore"
-        const val BLOCKLIST_FILE = "blocklist.json"
-    }
+    companion object { const val BLOCKLIST_FILE = "blocklist.json" }
 }

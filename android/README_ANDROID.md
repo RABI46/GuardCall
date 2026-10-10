@@ -108,3 +108,41 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## CI
 Workflow `.github/workflows/android.yml` : tests unitaires, lint (bloquant sur
 `NewApi`) puis build de l'APK debug.
+
+## V2 — reconstruction
+
+La V2 de cette branche est une nouvelle implémentation : les commits locaux
+`ca6bdc4` et `8488e7e` de la session précédente n’ont pas pu être récupérés.
+Leurs 109 tests ne sont donc pas présentés comme des tests récupérés ou validés.
+
+- Sept écrans : Accueil, Bloqués, Liste blanche, Plages, Identifiés, Historique,
+  Réglages. Recherche, ajout/modification/suppression et confirmations d’effacement.
+- Moteur pur `domain/RuleEngine.kt` : pause → liste blanche → blocage exact →
+  plage (la plus spécifique pour le motif) → silencieux → autorisation.
+- `blocklist.json` conserve les champs V1 (`blocked`, `identified`, `rules`) et
+  ajoute `schemaVersion: 2`, `allowed`, `settings`. La première mutation sauvegarde
+  l’original dans `blocklist.v1.bak` avant remplacement atomique. Une lecture seule
+  adapte la V1 en mémoire, sans réécriture. Un fichier corrompu ou d’une version
+  future n’est jamais remplacé par une liste vide ; l’UI affiche l’erreur.
+- Écritures sérialisées, snapshot partagé entre l’UI et le service. Le service
+  dispose d’un délai indépendant de 3 secondes avant autorisation par défaut.
+- Historique privé, borné à 500 entrées, stocké dans `call_history.json`, exclu
+  des sauvegardes cloud **et** des transferts d’appareil. Écriture après réponse
+  à Android, sur un exécuteur indépendant. Une interruption du processus peut
+  perdre une dernière entrée ; ce n’est pas un journal téléphonique exhaustif.
+- minSdk reste 26, mais le filtrage par une application autonome nécessite le
+  rôle Android 10+ : cette application n’est pas un composeur téléphonique par
+  défaut. Android 8/9 permettent de gérer les listes, pas d’activer ce filtrage.
+  `setSilenceCall` reste strictement gardé par `SDK_INT >= Q`.
+
+### Validation V2
+
+La CI doit réussir `testDebugUnitTest`, `lintDebug`, puis `assembleDebug`.
+Un succès des tests métier seuls ne valide pas les écrans Compose. Les tests
+ajoutés couvrent notamment les combinaisons de priorité, migration, versions
+inconnues/corruption, écritures concurrentes et limite de l’historique.
+
+Le build CI ne remplace pas un essai sur appareil : vérifier l’octroi/retrait
+du rôle, un appel bloqué, une exception whitelist sur plage Begone, le silencieux,
+la pause, l’historique et une mise à jour depuis la V1. Aucune simulation de ces
+scénarios sur appareil n’est revendiquée ici.

@@ -1,107 +1,118 @@
 package com.guardcall.screening
 
+import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.telecom.Call
 import android.telecom.CallScreeningService
 import android.util.Log
-import com.guardcall.data.BlocklistMatcher
-import com.guardcall.data.BlocklistStore
-import java.util.concurrent.Executors
+import com.guardcall.GuardCallApp
+import com.guardcall.domain.CallAction
+import com.guardcall.domain.CallDecision
+import com.guardcall.domain.HistoryEntry
+import com.guardcall.domain.RuleEngine
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-/**
- * Service de filtrage d'appels Android — équivalent du `CallDirectoryHandler`
- * iOS.
- *
- * Deux points corrigés par rapport à la version initiale :
- * 1. `setSilenceCall` n'existe qu'à partir de l'**API 29** alors que `minSdk`
- *    vaut 26 : l'appel est désormais gardé par `Build.VERSION.SDK_INT`, sinon un
- *    `NoSuchMethodError` faisait planter le service sur Android 8 et 9.
- * 2. La lecture du fichier se fait sur un executor dédié : `onScreenCall` est
- *    appelé sur le thread principal et une E/S disque y provoquait un ANR.
- */
 class GuardCallScreeningService : CallScreeningService() {
-
-    private lateinit var store: BlocklistStore
-    private val executor by lazy { Executors.newSingleThreadExecutor() }
-
-    override fun onCreate() {
-        super.onCreate()
-        store = BlocklistStore(applicationContext)
-    }
+    private val main = Handler(Looper.getMainLooper())
+    private val worker = ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(8))
+    private val pending = java.util.IdentityHashMap<Call.Details, Runnable>() // Main-thread confined.
+    private val app get() = application as GuardCallApp
+    private var destroyed = false
 
     override fun onScreenCall(callDetails: Call.Details) {
-        val incomingNumber = callDetails.handle?.schemeSpecificPart
-
-        executor.execute {
-            val payload = store.loadNow()
-            val blocked = BlocklistMatcher.isBlocked(incomingNumber, payload)
-            val label = BlocklistMatcher.identificationLabel(incomingNumber, payload)
-
-            // Le motif n'est utile que si l'appel est bloqué : il évite de
-            // reparcourir les règles pour rien sur un appel légitime.
-            val reason = if (blocked) BlocklistMatcher.blockingLabel(incomingNumber, payload) else null
-
-            Log.i(
-                TAG,
-                "Appel entrant ${mask(incomingNumber)} | blocked=$blocked motif=$reason " +
-                    "label=$label | bloqués=${payload.blocked.size} " +
-                    "plages=${payload.effectiveRules.size} identifiés=${payload.identified.size}"
-            )
-
-            val response = CallResponse.Builder().apply {
-                when {
-                    blocked -> {
-                        // Blocage : appel rejeté, sans sonnerie ni notification.
-                        setDisallowCall(true)
-                        setRejectCall(true)
-                        setSkipCallLog(false)
-                        setSkipNotification(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            callDetails.callDirection != Call.Details.DIRECTION_INCOMING) {
+            safeRespond(callDetails, CallResponse.Builder().build())
+            return
+        }
+        val fallback = Runnable {
+            finish(callDetails, CallDecision(CallAction.ALLOW, "Délai de filtrage dépassé", null), false)
+        }
+        pending[callDetails] = fallback
+        // Telecom imposes 5s. Arm a separate main-loop deadline before any disk access.
+        main.postDelayed(fallback, 3_000)
+        val number = callDetails.handle?.schemeSpecificPart
+        try {
+            worker.execute {
+                var record = false
+                val decision = try {
+                    val payload = app.blocklistStore.loadNow()
+                    record = payload.settings.historyEnabled
+                    RuleEngine(payload).evaluate(number).let {
+                        if (it.action == CallAction.SILENCE && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                            it.copy(action = CallAction.ALLOW, reason = "${it.reason} — silencieux disponible dès Android 10")
+                        } else it
                     }
+                } catch (e: Exception) {
+                    // No raw numbers or JSON contents in logcat. Fail open, never replace corrupt storage.
+                    Log.w(TAG, "Filtrage indisponible : ${e.javaClass.simpleName}")
+                    CallDecision(CallAction.ALLOW, "Filtrage indisponible", null)
+                }
+                main.post { finish(callDetails, decision, record) }
+            }
+        } catch (e: RejectedExecutionException) {
+            finish(callDetails, CallDecision(CallAction.ALLOW, "Service occupé", null), false)
+        }
+    }
 
-                    label != null -> {
-                        // Spam suspect : on laisse passer mais on coupe la sonnerie.
-                        // `setSilenceCall` est disponible à partir d'Android 10 (API 29).
-                        setDisallowCall(false)
-                        setRejectCall(false)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            setSilenceCall(true)
-                        }
-                        setSkipCallLog(false)
-                        setSkipNotification(false)
-                    }
-
-                    else -> {
-                        setDisallowCall(false)
-                        setRejectCall(false)
+    private fun finish(details: Call.Details, decision: CallDecision, record: Boolean) {
+        val timeout = pending.remove(details) ?: return // Exactly one response; late results discarded.
+        main.removeCallbacks(timeout)
+        if (destroyed) return
+        val response = CallResponse.Builder().apply {
+            when (decision.action) {
+                CallAction.BLOCK -> {
+                    setDisallowCall(true)
+                    setRejectCall(true)
+                    setSkipCallLog(false)
+                    setSkipNotification(false)
+                }
+                CallAction.SILENCE -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        setSilenceCall(true)
                     }
                 }
-            }.build()
-
-            respondToCall(callDetails, response)
+                CallAction.ALLOW -> Unit
+            }
+        }.build()
+        // respondToCall's binder adapter is main-thread managed (cleared on unbind).
+        if (safeRespond(details, response) && record) {
+            val entry = HistoryEntry(timestamp = System.currentTimeMillis(), number = decision.number,
+                action = decision.action, reason = decision.reason)
+            app.historyExecutor.execute {
+                try { app.historyStore.appendNow(entry) }
+                catch (e: Exception) { Log.w(TAG, "Historique indisponible : ${e.javaClass.simpleName}") }
+            }
         }
+    }
+
+    private fun safeRespond(details: Call.Details, response: CallResponse): Boolean = try {
+        respondToCall(details, response)
+        true
+    } catch (e: RuntimeException) {
+        Log.w(TAG, "Réponse impossible : ${e.javaClass.simpleName}")
+        false
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        pending.keys.toList().forEach {
+            finish(it, CallDecision(CallAction.ALLOW, "Service déconnecté", null), false)
+        }
+        return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
-        executor.shutdown()
-        try {
-            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-                executor.shutdownNow()
-            }
-        } catch (e: InterruptedException) {
-            executor.shutdownNow()
-            Thread.currentThread().interrupt()
-        }
+        destroyed = true
+        main.removeCallbacksAndMessages(null)
+        pending.clear()
+        worker.shutdownNow() // Never wait for IO on the main thread.
         super.onDestroy()
     }
 
-    /** Le journal système ne doit pas contenir de numéro en clair. */
-    private fun mask(number: String?): String {
-        if (number.isNullOrEmpty()) return "<inconnu>"
-        return if (number.length <= 4) "****" else "****" + number.takeLast(2)
-    }
-
-    private companion object {
-        const val TAG = "OnraccrocheScreening"
-    }
+    private companion object { const val TAG = "OnraccrocheScreening" }
 }
