@@ -124,6 +124,15 @@ jobs:
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Un APK debug n'est pas reproductible (horodatages) : comparer les
+          # octets ajouterait ~8 Mo à l'historique à chaque run. On ne committe
+          # donc qu'une seule fois par version.
+          if git ls-files --error-unmatch "dist/${{ steps.stage.outputs.name }}" >/dev/null 2>&1; then
+            echo "dist/${{ steps.stage.outputs.name }} déjà versionné pour cette version — aucun commit"
+            exit 0
+          fi
+
           git add -f "dist/${{ steps.stage.outputs.name }}"
           if git diff --cached --quiet; then
             echo "APK inchangé, aucun commit"
