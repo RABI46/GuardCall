@@ -2,13 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions pour filtrage d'appels -->
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
-    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
-    <!-- Optionnel : pour bloquer sans être dialer par défaut, ROLE_CALL_SCREENING suffit (API 29+) -->
-    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!--
+      Aucune permission dangereuse n'est demandée : le filtrage d'appels passe
+      exclusivement par le rôle système ROLE_CALL_SCREENING, accordé par
+      l'utilisateur via RoleManager. Une version précédente demandait
+      READ_PHONE_STATE, READ_CALL_LOG, CALL_PHONE, ANSWER_PHONE_CALLS et
+      READ_CONTACTS sans en utiliser aucune — surface d'attaque inutile et motif
+      de rejet à la revue Play Store.
+    -->
 
     <application
         android:name=".GuardCallApp"
@@ -33,7 +34,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Service de filtrage d'appels (Android 7.0+ / API 24) -->
+        <!-- Service de filtrage d'appels (Android 7.0+ / API 24). -->
         <service
             android:name=".screening.GuardCallScreeningService"
             android:permission="android.permission.BIND_SCREENING_SERVICE"

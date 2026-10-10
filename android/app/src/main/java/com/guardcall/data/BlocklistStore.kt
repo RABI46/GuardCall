@@ -1,97 +1,129 @@
 package com.guardcall.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import android.util.Log
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
-private val Context.dataStore by preferencesDataStore(name = "guardcall_prefs")
-
+/**
+ * Persistance de la liste des numéros.
+ *
+ * Le **fichier JSON est l'unique source de vérité**. Une précédente version
+ * écrivait dans DataStore + fichier + SharedPreferences et lisait des sources
+ * différentes selon l'appelant (`load()` lisait DataStore, `loadSync()` le
+ * fichier) : l'UI et le service de filtrage pouvaient donc diverger. Les échecs
+ * d'écriture ne sont plus avalés — ils remontent en [MutationResult.StorageFailure].
+ *
+ * Toutes les méthodes `suspend` déplacent l'E/S sur [Dispatchers.IO] ;
+ * [loadNow] et [saveNow] sont synchrones et doivent être appelées hors thread
+ * principal (c'est ce que fait le service de filtrage via son propre executor).
+ */
 class BlocklistStore(private val context: Context) {
 
     private val gson = Gson()
-    private val KEY_BLOCKLIST = stringPreferencesKey("guardcall.blocklist.v1")
-    private val blocklistFile: File get() = File(context.filesDir, "blocklist.json")
 
-    private fun toJson(payload: BlocklistPayload): String = gson.toJson(payload)
-    private fun fromJson(json: String): BlocklistPayload? = try {
-        gson.fromJson(json, BlocklistPayload::class.java)
-    } catch (_: Exception) { null }
+    private val blocklistFile: File
+        get() = File(context.filesDir, BLOCKLIST_FILE)
 
-    suspend fun load(): BlocklistPayload {
-        val fromPrefs = context.dataStore.data.map { it[KEY_BLOCKLIST] }.first()
-        if (fromPrefs != null) {
-            fromJson(fromPrefs)?.let { return it }
+    // MARK: - Lecture
+
+    /** Synchrone — à n'appeler que hors thread principal. */
+    fun loadNow(): BlocklistPayload {
+        val file = blocklistFile
+        if (!file.exists()) return BlocklistPayload.EMPTY
+
+        val payload = try {
+            gson.fromJson(file.readText(), BlocklistPayload::class.java)
+        } catch (e: Exception) {
+            Log.e(TAG, "Liste illisible ($file) — liste vide utilisée", e)
+            null
+        } ?: return BlocklistPayload.EMPTY
+
+        // Les données héritées peuvent contenir des numéros au format national :
+        // on les renormalise au chargement pour que la comparaison E.164 fonctionne.
+        return payload.normalized()
+    }
+
+    suspend fun load(): BlocklistPayload = withContext(Dispatchers.IO) { loadNow() }
+
+    // MARK: - Écriture
+
+    /** Synchrone — à n'appeler que hors thread principal. */
+    fun saveNow(payload: BlocklistPayload): MutationResult {
+        val sanitized = payload.sanitized()
+        val encoded = try {
+            gson.toJson(sanitized)
+        } catch (e: Exception) {
+            Log.e(TAG, "Encodage JSON impossible", e)
+            return MutationResult.StorageFailure("Encodage de la liste impossible : ${e.message}")
         }
-        if (blocklistFile.exists()) {
-            try { fromJson(blocklistFile.readText())?.let { return it } } catch (_: Exception) {}
+
+        val target = blocklistFile
+        val temp = File(target.parentFile, "${target.name}.tmp")
+        return try {
+            temp.writeText(encoded)
+            if (target.exists() && !target.delete()) {
+                Log.w(TAG, "Ancien fichier non supprimable, écriture directe")
+                target.writeText(encoded)
+            } else if (!temp.renameTo(target)) {
+                target.writeText(encoded)
+            }
+            MutationResult.Success(sanitized)
+        } catch (e: Exception) {
+            Log.e(TAG, "Échec d'écriture de $target", e)
+            runCatching { temp.delete() }
+            MutationResult.StorageFailure("Enregistrement impossible : ${e.message}")
         }
-        return BlocklistPayload.DEFAULT
     }
 
-    fun loadSync(): BlocklistPayload {
-        if (blocklistFile.exists()) {
-            try { fromJson(blocklistFile.readText())?.let { return it } } catch (_: Exception) {}
+    suspend fun save(payload: BlocklistPayload): MutationResult =
+        withContext(Dispatchers.IO) { saveNow(payload) }
+
+    // MARK: - Mutations
+
+    suspend fun addBlocked(rawNumber: String, label: String? = null): MutationResult =
+        withContext(Dispatchers.IO) {
+            when (val validation = com.guardcall.util.PhoneNumberNormalizer.validate(rawNumber)) {
+                is com.guardcall.util.PhoneNumberNormalizer.Result.Invalid ->
+                    MutationResult.InvalidNumber(validation.message)
+
+                is com.guardcall.util.PhoneNumberNormalizer.Result.Valid -> {
+                    val current = loadNow()
+                    if (current.blocked.any { it.phoneNumber == validation.e164 }) {
+                        return@withContext MutationResult.Duplicate(current)
+                    }
+                    saveNow(current.copy(blocked = current.blocked + BlockedEntry(validation.e164, label)))
+                }
+            }
         }
-        val prefs = context.getSharedPreferences("guardcall_prefs_fallback", Context.MODE_PRIVATE)
-        prefs.getString("guardcall.blocklist.json", null)?.let {
-            fromJson(it)?.let { return it }
+
+    suspend fun removeBlocked(e164: String): MutationResult = withContext(Dispatchers.IO) {
+        val current = loadNow()
+        saveNow(current.copy(blocked = current.blocked.filterNot { it.phoneNumber == e164 }))
+    }
+
+    suspend fun addIdentification(rawNumber: String, label: String): MutationResult =
+        withContext(Dispatchers.IO) {
+            when (val validation = com.guardcall.util.PhoneNumberNormalizer.validate(rawNumber)) {
+                is com.guardcall.util.PhoneNumberNormalizer.Result.Invalid ->
+                    MutationResult.InvalidNumber(validation.message)
+
+                is com.guardcall.util.PhoneNumberNormalizer.Result.Valid -> {
+                    val current = loadNow()
+                    saveNow(
+                        current.copy(
+                            identified = current.identified.filterNot { it.phoneNumber == validation.e164 } +
+                                IdentificationEntry(validation.e164, label)
+                        )
+                    )
+                }
+            }
         }
-        return BlocklistPayload.DEFAULT
-    }
 
-    suspend fun save(payload: BlocklistPayload) {
-        val encoded = toJson(payload)
-        context.dataStore.edit { it[KEY_BLOCKLIST] = encoded }
-        try { blocklistFile.writeText(encoded) } catch (_: Exception) {}
-        context.getSharedPreferences("guardcall_prefs_fallback", Context.MODE_PRIVATE)
-            .edit().putString("guardcall.blocklist.json", encoded).apply()
-    }
-
-    suspend fun addBlocked(phoneNumber: String, label: String? = null) {
-        val digits = phoneNumber.filter { it.isDigit() }
-        if (digits.isBlank()) return
-        val current = load()
-        if (current.blocked.any { it.phoneNumber == digits }) return
-        val updated = current.copy(
-            blocked = (current.blocked + BlockedEntry(digits, label)).sortedBy { it.phoneNumber }
-        )
-        save(updated)
-    }
-
-    suspend fun removeBlocked(phoneNumber: String) {
-        val current = load()
-        save(current.copy(blocked = current.blocked.filterNot { it.phoneNumber == phoneNumber }))
-    }
-
-    suspend fun addIdentification(phoneNumber: String, label: String) {
-        val digits = phoneNumber.filter { it.isDigit() }
-        val current = load()
-        val updated = current.copy(
-            identified = (current.identified.filterNot { it.phoneNumber == digits } + IdentificationEntry(digits, label))
-                .sortedBy { it.phoneNumber }
-        )
-        save(updated)
-    }
-
-    fun normalize(incoming: String?): String? {
-        if (incoming.isNullOrBlank()) return null
-        val digits = incoming.filter { it.isDigit() }
-        return if (digits.length in 4..15) digits.takeLast(15) else digits.ifBlank { null }
-    }
-
-    fun isBlocked(incoming: String?, payload: BlocklistPayload = loadSync()): Boolean {
-        val norm = normalize(incoming) ?: return false
-        return payload.blocked.any { norm.endsWith(it.phoneNumber) || it.phoneNumber.endsWith(norm) }
-    }
-
-    fun identificationLabel(incoming: String?, payload: BlocklistPayload = loadSync()): String? {
-        val norm = normalize(incoming) ?: return null
-        return payload.identified.firstOrNull { norm.endsWith(it.phoneNumber) || it.phoneNumber.endsWith(norm) }?.label
+    companion object {
+        private const val TAG = "BlocklistStore"
+        const val BLOCKLIST_FILE = "blocklist.json"
     }
 }

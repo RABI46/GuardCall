@@ -31,9 +31,10 @@ targets:
     platform: iOS
     deploymentTarget: "16.0"
     sources:
+      # `Shared/` est compilé dans l'app ET dans l'extension : une seule
+      # définition des modèles et de la normalisation E.164.
+      - path: Shared
       - path: GuardCall
-        excludes:
-          - PrivacyInfo.xcprivacy
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.app
@@ -49,17 +50,17 @@ targets:
       - target: GuardCallDirectory
         embed: true
         codeSign: true
-    # Privacy manifest is auto-detected if placed in bundle, but we list it
-    # for explicit tracking
 
   GuardCallDirectory:
     type: app-extension
     platform: iOS
     deploymentTarget: "16.0"
     sources:
+      - path: Shared
       - path: GuardCallDirectory
     settings:
       base:
+        # Doit être préfixé par le bundle ID de l'app conteneur (`com.guardcall.app`).
         PRODUCT_BUNDLE_IDENTIFIER: com.guardcall.app.calldirectory
         INFOPLIST_FILE: GuardCallDirectory/Info.plist
         PRODUCT_NAME: GuardCallDirectory

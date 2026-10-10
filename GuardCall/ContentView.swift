@@ -1,16 +1,63 @@
 import SwiftUI
 import CallKit
 
-struct ContentView: View {
-    @State private var statusMessage = Constants.Localization.statusChecking
-    @State private var isReloading = false
-    @State private var lastError: String?
-    @State private var showSettingsLink = false
+/// État fonctionnel de l'extension. L'UI est pilotée par cet `enum` et **non**
+/// par les chaînes localisées : changer un libellé ne peut plus casser l'icône
+/// ni la couleur.
+enum ExtensionStatus: Equatable {
+    case unknown
+    case checking
+    case enabled
+    case disabled
+    case failed(String)
 
-    // Demo blocklist UI state
-    @State private var blocklist = BlocklistPayload.default
+    var title: String {
+        switch self {
+        case .unknown, .failed:
+            return Constants.Localization.extensionUnknown
+        case .checking:
+            return Constants.Localization.statusChecking
+        case .enabled:
+            return Constants.Localization.extensionEnabled
+        case .disabled:
+            return Constants.Localization.extensionDisabled
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .enabled: return "checkmark.shield.fill"
+        case .disabled: return "xmark.shield.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .unknown, .checking: return "shield.lefthalf.filled"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .enabled: return .green
+        case .disabled: return .orange
+        case .failed: return .red
+        case .unknown, .checking: return .secondary
+        }
+    }
+
+    var showsSettingsShortcut: Bool {
+        switch self {
+        case .disabled, .failed: return true
+        default: return false
+        }
+    }
+}
+
+struct ContentView: View {
+    @State private var status: ExtensionStatus = .checking
+    @State private var isReloading = false
+    @State private var statusMessage: String?
+    @State private var blocklist = BlocklistPayload.empty
     @State private var newNumberText = ""
     @State private var showAddSheet = false
+    @State private var formError: String?
 
     private let store = BlocklistStore()
 
@@ -58,15 +105,16 @@ struct ContentView: View {
     private var statusSection: some View {
         Section("Statut de l’extension") {
             VStack(alignment: .leading, spacing: 10) {
-                Label(statusMessage, systemImage: statusIcon)
+                Label(status.title, systemImage: status.systemImage)
                     .font(.subheadline)
-                    .foregroundStyle(statusColor)
+                    .foregroundStyle(status.tint)
                     .accessibilityIdentifier("GuardCall.StatusLabel")
 
-                if let lastError {
-                    Text(lastError)
+                if let statusMessage {
+                    Text(statusMessage)
                         .font(.caption)
                         .foregroundStyle(.red)
+                        .accessibilityIdentifier("GuardCall.StatusError")
                 }
 
                 HStack(spacing: 12) {
@@ -83,7 +131,7 @@ struct ContentView: View {
                     .disabled(isReloading)
                     .accessibilityIdentifier("GuardCall.ReloadButton")
 
-                    if showSettingsLink {
+                    if status.showsSettingsShortcut {
                         Button(Constants.Localization.openSettings) { openSystemSettings() }
                             .buttonStyle(.bordered)
                     }
@@ -97,7 +145,7 @@ struct ContentView: View {
         Section {
             ForEach(blocklist.blocked) { entry in
                 HStack {
-                    Text(formatted(entry.phoneNumber))
+                    Text(PhoneNumber.display(entry.phoneNumber))
                         .font(.body.monospacedDigit())
                     Spacer()
                     if let label = entry.label {
@@ -109,11 +157,12 @@ struct ContentView: View {
             .onDelete(perform: deleteBlocked)
 
             if blocklist.blocked.isEmpty {
-                Text("Aucun numéro bloqué. Ajoutez-en un pour tester.")
+                Text("Aucun numéro bloqué. Ajoutez-en un pour commencer.")
                     .foregroundStyle(.secondary)
             }
 
             Button {
+                formError = nil
                 showAddSheet = true
             } label: {
                 Label("Ajouter un numéro", systemImage: "plus.circle.fill")
@@ -122,7 +171,8 @@ struct ContentView: View {
         } header: {
             Text("Numéros bloqués (\(blocklist.blocked.count))")
         } footer: {
-            Text("Les numéros sont stockés dans l’App Group et lus par l’extension Call Directory. Pensez à recharger l’extension après modification.")
+            Text("Les numéros sont stockés dans l’App Group et lus par l’extension Call Directory. "
+                 + "L’extension est rechargée automatiquement après chaque modification.")
         }
     }
 
@@ -141,11 +191,11 @@ struct ContentView: View {
             }
 
             DisclosureGroup("Numéros d’identification") {
-                ForEach(blocklist.identified, id: \.phoneNumber) { e in
+                ForEach(blocklist.identified) { entry in
                     HStack {
-                        Text(formatted(e.phoneNumber)).monospacedDigit()
+                        Text(PhoneNumber.display(entry.phoneNumber)).monospacedDigit()
                         Spacer()
-                        Text(e.label).foregroundStyle(.secondary)
+                        Text(entry.label).foregroundStyle(.secondary)
                     }.font(.caption)
                 }
             }
@@ -156,14 +206,34 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section("Numéro à bloquer") {
-                    TextField("Ex. 014085551234", text: $newNumberText)
+                    TextField("Ex. 01 40 85 55 12 ou +33140855512", text: $newNumberText)
                         .keyboardType(.phonePad)
                         .textContentType(.telephoneNumber)
                         .accessibilityIdentifier("GuardCall.NewNumberField")
+                        .onChange(of: newNumberText) { _ in formError = nil }
+
+                    if let normalizedPreview {
+                        Text("Sera enregistré : \(PhoneNumber.display(normalizedPreview))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+
+                if let formError {
+                    Section {
+                        Text(formError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("GuardCall.FormError")
+                    }
+                }
+
                 Section {
-                    Text("Saisissez un numéro complet (chiffres uniquement). Il sera trié automatiquement pour respecter l’ordre croissant exigé par CallKit.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Indicatif pays obligatoire : un numéro national (01…, 06…) est converti "
+                         + "avec l’indicatif +\(Constants.defaultCountryCallingCode). CallKit rejette "
+                         + "tout l’annuaire si un seul numéro n’est pas au format E.164.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Nouveau numéro")
@@ -174,35 +244,17 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Ajouter") { addCurrentNumber() }
-                        .disabled(sanitizedNumber == nil)
+                        .disabled(normalizedPreview == nil)
                 }
             }
         }
     }
 
-    // MARK: - Logic
+    // MARK: - Logique
 
-    private var statusIcon: String {
-        if statusMessage == Constants.Localization.extensionEnabled { return "checkmark.shield.fill" }
-        if statusMessage == Constants.Localization.extensionDisabled { return "xmark.shield.fill" }
-        return "shield.lefthalf.filled"
-    }
-
-    private var statusColor: Color {
-        if statusMessage == Constants.Localization.extensionEnabled { return .green }
-        if statusMessage == Constants.Localization.extensionDisabled { return .orange }
-        return .secondary
-    }
-
-    private var sanitizedNumber: Int64? {
-        let digits = newNumberText.filter { $0.isNumber }
-        return Int64(digits)
-    }
-
-    private func formatted(_ n: Int64) -> String {
-        let s = String(n)
-        // petit formatage lisible
-        return s
+    /// Numéro validé E.164 correspondant à la saisie courante, ou `nil`.
+    private var normalizedPreview: Int64? {
+        PhoneNumber.normalizeE164(newNumberText)
     }
 
     @MainActor
@@ -213,28 +265,25 @@ struct ContentView: View {
 
     @MainActor
     private func checkExtensionStatus() async {
-        statusMessage = Constants.Localization.statusChecking
-        showSettingsLink = false
-        lastError = nil
+        status = .checking
+        statusMessage = lastReportedExtensionError()
 
         do {
-            let status = try await CXCallDirectoryManager.sharedInstance
-                .enabledStatusForExtension(withIdentifier: Constants.extensionIdentifier)
-            switch status {
+            let enabledStatus = try await CXCallDirectoryManager.sharedInstance
+                .enabledStatus(forExtensionWithIdentifier: Constants.extensionIdentifier)
+            switch enabledStatus {
             case .enabled:
-                statusMessage = Constants.Localization.extensionEnabled
+                status = .enabled
             case .disabled:
-                statusMessage = Constants.Localization.extensionDisabled
-                showSettingsLink = true
+                status = .disabled
             case .unknown:
-                statusMessage = Constants.Localization.extensionUnknown
+                status = .unknown
             @unknown default:
-                statusMessage = Constants.Localization.extensionUnknown
+                status = .unknown
             }
         } catch {
-            lastError = error.localizedDescription
-            statusMessage = "Erreur : \(error.localizedDescription)"
-            showSettingsLink = true
+            status = .failed(error.localizedDescription)
+            statusMessage = error.localizedDescription
         }
     }
 
@@ -245,15 +294,14 @@ struct ContentView: View {
         do {
             try await CXCallDirectoryManager.sharedInstance
                 .reloadExtension(withIdentifier: Constants.extensionIdentifier)
-            statusMessage = "Extension rechargée ✓"
-            lastError = nil
-            // re-vérifie le statut après un court délai (l’OS est asynchrone)
+            statusMessage = nil
+            // Le rechargement est asynchrone côté système : on laisse un court
+            // délai avant de relire le statut.
             try? await Task.sleep(nanoseconds: 700_000_000)
             await checkExtensionStatus()
         } catch {
-            lastError = error.localizedDescription
-            statusMessage = "Échec du rechargement"
-            showSettingsLink = true
+            status = .failed(error.localizedDescription)
+            statusMessage = error.localizedDescription
         }
     }
 
@@ -264,36 +312,67 @@ struct ContentView: View {
     }
 
     private func addCurrentNumber() {
-        guard let n = sanitizedNumber else { return }
+        guard let number = normalizedPreview else {
+            formError = PhoneNumber.validationMessage(for: newNumberText)
+            return
+        }
         do {
-            try store.addBlocked(phoneNumber: n, label: "Manuel")
+            try store.addBlocked(phoneNumber: number, label: "Manuel")
             blocklist = store.load()
             newNumberText = ""
             showAddSheet = false
             Task { await reloadExtension() }
         } catch {
-            lastError = error.localizedDescription
+            formError = error.localizedDescription
         }
     }
 
     private func deleteBlocked(at offsets: IndexSet) {
-        for idx in offsets {
-            let entry = blocklist.blocked[idx]
-            try? store.removeBlocked(phoneNumber: entry.phoneNumber)
+        var failures: [String] = []
+        for index in offsets {
+            let entry = blocklist.blocked[index]
+            do {
+                try store.removeBlocked(phoneNumber: entry.phoneNumber)
+            } catch {
+                failures.append("\(PhoneNumber.display(entry.phoneNumber)) : \(error.localizedDescription)")
+            }
         }
         blocklist = store.load()
+        statusMessage = failures.isEmpty ? nil : "Suppression impossible — \(failures.joined(separator: ", "))"
         Task { await reloadExtension() }
+    }
+
+    /// Dernière erreur publiée par l'extension dans l'App Group.
+    private func lastReportedExtensionError() -> String? {
+        UserDefaults(suiteName: Constants.appGroupIdentifier)?
+            .string(forKey: Constants.Storage.lastErrorKey)
     }
 }
 
-// MARK: - Async wrappers pour CallKit (iOS 16+ n’a pas encore les overloads async partout)
+// MARK: - Helpers
+
+private extension PhoneNumber {
+    /// Message d'erreur lisible pour un échec de validation, `nil` si valide.
+    static func validationMessage(for raw: String) -> String? {
+        switch validate(raw) {
+        case .success: return nil
+        case .failure(let failure): return failure.message
+        }
+    }
+}
+
+// MARK: - CallKit async
 
 extension CXCallDirectoryManager {
-    func enabledStatusForExtension(withIdentifier identifier: String) async throws -> CXCallDirectoryEnabledStatus {
-        try await withCheckedThrowingContinuation { cont in
+    /// Variante `async` de `getEnabledStatusForExtension`, absente de l'API.
+    func enabledStatus(forExtensionWithIdentifier identifier: String) async throws -> CXCallDirectoryEnabledStatus {
+        try await withCheckedThrowingContinuation { continuation in
             getEnabledStatusForExtension(withIdentifier: identifier) { status, error in
-                if let error { cont.resume(throwing: error) }
-                else { cont.resume(returning: status) }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: status)
+                }
             }
         }
     }

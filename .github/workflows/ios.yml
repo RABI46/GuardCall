@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: Build & Test (XcodeGen + Simulator)
@@ -17,89 +24,77 @@ jobs:
 
       - name: Install XcodeGen
         run: |
-          if ! command -v xcodegen &> /dev/null; then
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then
             brew install xcodegen
           fi
           xcodegen --version
 
       - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
-
-      - name: Cache SPM
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
-
-      - name: Show project info
-        continue-on-error: true
         run: |
-          set -x
-          ls -la
-          echo "--- project.yml ---"
-          cat project.yml
-          echo "--- generated ---"
-          ls -R 2>&1 | head -n 100
-          if [ -d GuardCall.xcodeproj ]; then
-            echo "project exists"
-            cat GuardCall.xcodeproj/project.pbxproj 2>&1 | head -n 200 || true
-            xcodebuild -list -project GuardCall.xcodeproj 2>&1 || echo "xcodebuild -list failed, trying xcodebuild -list without project"
-            xcodebuild -list 2>&1 || true
-            xcodebuild -version 2>&1 || true
-            xcode-select -p 2>&1 || true
-          else
-            echo "ERROR: GuardCall.xcodeproj missing!"
-            ls -la 2>&1
-            exit 1
-          fi
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          test -d GuardCall.xcodeproj || { echo "::error::GuardCall.xcodeproj manquant"; exit 1; }
+          xcodebuild -list -project GuardCall.xcodeproj
 
+      - name: Select simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+          DEVICE="iPhone 16"
+          if ! xcrun simctl list devices available | grep -q "$DEVICE"; then
+            DEVICE=$(xcrun simctl list devices available | grep -oE 'iPhone [0-9]+' | head -1)
+            [ -n "$DEVICE" ] || DEVICE="iPhone 15"
+          fi
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
+          echo "Simulateur retenu : $DEVICE"
+
+      # `set -o pipefail` est indispensable : sans lui, le code de sortie de
+      # l'étape est celui de `tail`, donc 0 même quand xcodebuild échoue.
       - name: Build for testing
         run: |
-          set -x
-          xcrun --version 2>&1 || true
-          xcrun simctl list devices 2>&1 | head -n 50 || true
-          # Try iPhone 16 first, fallback to any iPhone if not found
-          DEVICE="iPhone 16"
-          if ! xcrun simctl list devices 2>&1 | grep -q "iPhone 16"; then
-            DEVICE=$(xcrun simctl list devices 2>&1 | grep -oE 'iPhone [0-9]+' | head -1)
-            echo "Falling back to device: $DEVICE"
-            [ -z "$DEVICE" ] && DEVICE="iPhone 15"
-          fi
-          echo "Using device: $DEVICE"
-          echo "$DEVICE" > /tmp/device_name
+          set -euo pipefail
           xcodebuild build-for-testing \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
-            -destination "platform=iOS Simulator,name=$DEVICE,OS=latest" \
+            -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.device }},OS=latest" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee /tmp/build.log | tail -n 200
-          echo "build exit code: ${PIPESTATUS[0]}"
-          cat /tmp/build.log | grep -i -A2 -B2 "error" | head -n 100 || true
 
       - name: Run tests
         run: |
-          set -x
-          DEVICE=$(cat /tmp/device_name 2>/dev/null || echo "iPhone 16")
-          if ! xcrun simctl list devices 2>&1 | grep -q "$DEVICE"; then
-            DEVICE=$(xcrun simctl list devices 2>&1 | grep -oE 'iPhone [0-9]+' | head -1)
-            [ -z "$DEVICE" ] && DEVICE="iPhone 15"
-          fi
-          echo "Testing on device: $DEVICE"
+          set -euo pipefail
           xcodebuild test-without-building \
             -project GuardCall.xcodeproj \
             -scheme GuardCall \
-            -destination "platform=iOS Simulator,name=$DEVICE,OS=latest" \
+            -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.device }},OS=latest" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
-            -enableCodeCoverage YES 2>&1 | tee /tmp/test.log | tail -n 300
-          echo "test exit: ${PIPESTATUS[0]}"
-          cat /tmp/test.log | grep -i -A5 -B5 "fail\|error\|GuardCallTests" | head -n 200 || true
+            -enableCodeCoverage YES \
+            -resultBundlePath /tmp/GuardCallTests.xcresult 2>&1 | tee /tmp/test.log | tail -n 300
 
-      - name: Lint Swift (non-blocking)
-        continue-on-error: true
+      - name: Test summary
+        if: always()
         run: |
-          if command -v swiftlint &> /dev/null; then swiftlint --version && swiftlint lint; else echo "SwiftLint not installed — skipping"; fi
+          set -uo pipefail
+          {
+            echo "### Tests iOS"
+            echo '```'
+            grep -E "Test Suite|Test Case.*(passed|failed)|Executed [0-9]+ test" /tmp/test.log | tail -n 60 || echo "aucune sortie de test"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install SwiftLint
+        run: |
+          set -euo pipefail
+          if ! command -v swiftlint >/dev/null 2>&1; then
+            brew install swiftlint
+          fi
+          swiftlint version
+
+      # Bloquant sur les erreurs SwiftLint (les avertissements restent visibles
+      # dans le log sans faire échouer le build).
+      - name: SwiftLint
+        run: |
+          set -euo pipefail
+          swiftlint lint --reporter github-actions-logging

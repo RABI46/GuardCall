@@ -67,3 +67,6 @@ android/local.properties
 
 # Analysis reports (keep tracked version if needed)
 # ANALYSIS.md kept for reference
+
+# APK publié par la CI (ajouté avec `git add -f` par android.yml)
+dist/

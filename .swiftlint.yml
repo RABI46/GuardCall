@@ -7,14 +7,12 @@ opt_in_rules:
   - force_unwrapping
   - implicit_return
 included:
+  - Shared
   - GuardCall
   - GuardCallDirectory
   - GuardCallTests
-  - android/app/src
 excluded:
   - DerivedData
-  - android/build
-  - android/.gradle
 line_length: 140
 type_body_length:
   warning: 400

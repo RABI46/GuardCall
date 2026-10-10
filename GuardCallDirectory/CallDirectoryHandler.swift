@@ -1,110 +1,123 @@
 import Foundation
 import CallKit
-import os.log
+import os
 
-class CallDirectoryHandler: CXCallDirectoryProvider {
+/// Extension Call Directory : publie dans CallKit les numéros à bloquer et ceux
+/// à identifier, à partir de la liste persistée dans l'App Group.
+///
+/// Deux modes sont gérés :
+/// - **rechargement complet** : on republie tout, tri croissant + déduplication ;
+/// - **rechargement incrémental** (`context.isIncremental`) : on calcule le delta
+///   entre l'instantané du dernier annuaire appliqué et l'état courant, puis on
+///   applique les suppressions et les ajouts. Sans cet instantané, les
+///   suppressions seraient silencieusement perdues.
+final class CallDirectoryHandler: CXCallDirectoryProvider {
 
-    private let logger = Logger(subsystem: "com.guardcall.app.calldirectory", category: "CallDirectory")
+    private let logger = Logger(subsystem: Constants.extensionIdentifier, category: "CallDirectory")
+    private let store = BlocklistStore()
 
     override func beginRequest(with context: CXCallDirectoryExtensionContext) {
-        // iOS 18.4+ : vérifier que le delegate est bien posé pour capter requestFailed
         context.delegate = self
 
-        let payload = BlocklistLoader.load()
-        logger.info("GuardCall: chargement blocklist — \(payload.blocked.count) bloqués, \(payload.identified.count) identifiés. incremental=\(context.isIncremental)")
-
         do {
+            let payload = store.load()
+
             if context.isIncremental {
-                // En mode incrémental, on ne ré-ajoute que les deltas.
-                // Stratégie simple pour ce squelette : on ne supporte que l'ajout.
-                // Pour une suppression, il faudrait persister un journal de diffs.
-                // Ici on log et on ne fait rien de destructif.
-                logger.warning("GuardCall: incremental reload demandé — aucune suppression appliquée (journal de diffs non implémenté).")
-                // Option : tenter d'ajouter quand même les numéros manquants sans doublon
-                // Le système lèvera duplicateEntries si doublon, on l'intercepte.
-                try addBlockingIncremental(payload.blocked, to: context)
-                try addIdentificationIncremental(payload.identified, to: context)
+                try applyIncremental(payload, to: context)
             } else {
-                addAllBlockingPhoneNumbers(payload.blocked, to: context)
-                addAllIdentificationPhoneNumbers(payload.identified, to: context)
+                applyFull(payload, to: context)
             }
+
+            // L'instantané n'est mis à jour qu'après une application réussie :
+            // en cas d'échec, le prochain rechargement repartira d'un delta juste.
+            try store.saveSnapshot(DirectorySnapshot(payload: payload))
+
             context.completeRequest()
-            logger.info("GuardCall: completeRequest OK")
+            let blocked = payload.blockingNumbersAscending.count
+            let identified = payload.identificationEntriesAscending.count
+            logger.info("GuardCall: annuaire appliqué — \(blocked) bloqués, \(identified) identifiés, "
+                        + "incremental=\(context.isIncremental)")
         } catch {
             logger.error("GuardCall: échec beginRequest — \(error.localizedDescription, privacy: .public)")
             context.cancelRequest(withError: error)
         }
     }
 
-    // MARK: - Full reload
+    // MARK: - Rechargement complet
 
-    private func addAllBlockingPhoneNumbers(_ entries: [BlockedEntry], to context: CXCallDirectoryExtensionContext) {
-        // Les numéros DOIVENT être strictement croissants
-        let sorted = entries.map(\.phoneNumber).sorted()
-        // Vérif doublon
-        var seen = Set<Int64>()
-        for number in sorted {
-            guard seen.insert(number).inserted else {
-                logger.warning("GuardCall: doublon bloqué ignoré \(number)")
-                continue
-            }
+    private func applyFull(_ payload: BlocklistPayload, to context: CXCallDirectoryExtensionContext) {
+        for number in payload.blockingNumbersAscending {
             context.addBlockingEntry(withNextSequentialPhoneNumber: number)
         }
-    }
-
-    private func addAllIdentificationPhoneNumbers(_ entries: [IdentificationEntry], to context: CXCallDirectoryExtensionContext) {
-        let sorted = entries.sorted { $0.phoneNumber < $1.phoneNumber }
-        var seen = Set<Int64>()
-        for entry in sorted {
-            guard seen.insert(entry.phoneNumber).inserted else {
-                logger.warning("GuardCall: doublon identification ignoré \(entry.phoneNumber)")
-                continue
-            }
+        for entry in payload.identificationEntriesAscending {
             context.addIdentificationEntry(withNextSequentialPhoneNumber: entry.phoneNumber, label: entry.label)
         }
     }
 
-    // MARK: - Incremental (best-effort)
+    // MARK: - Rechargement incrémental
 
-    private func addBlockingIncremental(_ entries: [BlockedEntry], to context: CXCallDirectoryExtensionContext) throws {
-        // En incrémental, addBlockingEntry lève si doublon. On tente et on log.
-        let sorted = entries.map(\.phoneNumber).sorted()
-        for number in sorted {
-            // On ne peut pas savoir côté extension ce qui est déjà présent.
-            // On tente ; en cas d'erreur duplicate, on l'ignore et on continue.
-            // CXCallDirectory ne permet pas de try/catch fin ; on doit laisser l'OS lever.
-            // Donc on ne peut pas vraiment faire du best-effort sans journal.
-            // On choisit de ne rien ajouter en incrémental pour éviter duplicateEntries.
-            // Le log ci-dessus explique la limitation.
-            _ = number
+    private func applyIncremental(_ payload: BlocklistPayload,
+                                  to context: CXCallDirectoryExtensionContext) throws {
+        let previous = store.loadSnapshot()
+        let current = DirectorySnapshot(payload: payload)
+        let delta = DirectoryDelta.between(previous: previous, current: current)
+
+        guard !delta.isEmpty else {
+            logger.info("GuardCall: rechargement incrémental sans changement.")
+            return
         }
-    }
 
-    private func addIdentificationIncremental(_ entries: [IdentificationEntry], to context: CXCallDirectoryExtensionContext) throws {
-        // Même limitation que ci-dessus
-        _ = entries
+        for number in delta.blockedToRemove {
+            context.removeBlockingEntry(withPhoneNumber: number)
+        }
+        for number in delta.identifiedToRemove {
+            context.removeIdentificationEntry(withPhoneNumber: number)
+        }
+        for number in delta.blockedToAdd {
+            context.addBlockingEntry(withNextSequentialPhoneNumber: number)
+        }
+        for number in delta.identifiedToAdd {
+            let label = payload.identified.first { $0.phoneNumber == number }?.label ?? "Spam suspecté"
+            context.addIdentificationEntry(withNextSequentialPhoneNumber: number, label: label)
+        }
+
+        logger.info("GuardCall: delta incrémental — "
+                    + "+\(delta.blockedToAdd.count)/-\(delta.blockedToRemove.count) bloqués, "
+                    + "+\(delta.identifiedToAdd.count)/-\(delta.identifiedToRemove.count) identifiés")
     }
 }
 
-extension CallDirectoryHandler: CXCallDirectoryExtensionContextDelegate {
-    func requestFailed(for extensionContext: CXCallDirectoryExtensionContext, withError error: Error) {
-        let logger = Logger(subsystem: "com.guardcall.app.calldirectory", category: "CallDirectory")
-        logger.error("GuardCall: requestFailed — \(error.localizedDescription, privacy: .public)")
+// MARK: - CXCallDirectoryExtensionContextDelegate
 
-        // Persiste l'erreur dans l'App Group pour affichage côté app
-        let payload: [String: Any] = [
-            "date": ISO8601DateFormatter().string(from: Date()),
-            "error": error.localizedDescription,
-            "code": (error as NSError).code
-        ]
-        if let data = try? JSONSerialization.data(withJSONObject: payload),
-           let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: BlocklistLoader.appGroupID)?
-            .appendingPathComponent("last_calldirectory_error.json") {
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+extension CallDirectoryHandler: CXCallDirectoryExtensionContextDelegate {
+
+    /// CallKit signale ici tout échec (numéros non triés, doublons, E.164
+    /// invalide…). L'erreur est republiée dans l'App Group pour que l'app puisse
+    /// l'afficher au lieu de laisser l'utilisateur devant un statut figé.
+    func requestFailed(for extensionContext: CXCallDirectoryExtensionContext, withError error: Error) {
+        logger.error("GuardCall: requestFailed — code=\((error as NSError).code) \(error.localizedDescription, privacy: .public)")
+
+        let message = CallDirectoryFailureMessage(
+            date: ISO8601DateFormatter().string(from: Date()),
+            code: (error as NSError).code,
+            message: error.localizedDescription
+        )
+
+        let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: Constants.appGroupIdentifier)
+        if let data = try? JSONEncoder().encode(message),
+           let url = container?.appendingPathComponent(Constants.Storage.lastErrorFileName) {
+            try? data.write(to: url, options: [.atomic])
         }
-        if let defaults = UserDefaults(suiteName: BlocklistLoader.appGroupID) {
-            defaults.set(error.localizedDescription, forKey: "guardcall.lastError")
-        }
+
+        UserDefaults(suiteName: Constants.appGroupIdentifier)?
+            .set(message.message, forKey: Constants.Storage.lastErrorKey)
     }
+}
+
+/// Erreur d'extension sérialisée pour affichage côté app.
+struct CallDirectoryFailureMessage: Codable {
+    let date: String
+    let code: Int
+    let message: String
 }
