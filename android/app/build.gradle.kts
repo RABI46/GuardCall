@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.guardcall"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.guardcall.app"
@@ -13,7 +13,7 @@ android {
         // Les APIs plus récentes (setSilenceCall, API 29) sont gardées par
         // Build.VERSION.SDK_INT dans GuardCallScreeningService.
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 3
         versionName = "2.0"
 

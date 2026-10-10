@@ -51,11 +51,17 @@ def main():
     for path in glob.glob("android/app/build/reports/lint-results-debug.xml"):
         root = ET.parse(path).getroot()
         issues = root.findall("issue")
+        # Actions only retains ten warnings per step. Group each severity so
+        # every issue remains visible through the Checks API.
+        groups = {"error": [], "warning": []}
         for issue in issues:
             location = issue.find("location")
             where = "" if location is None else f"{location.get('file')}:{location.get('line', '1')}: "
             level = "error" if issue.get("severity") in ("Error", "Fatal") else "warning"
-            annotate(level, issue.get("id", "Android lint"), where + issue.get("message", ""))
+            groups[level].append(f"{issue.get('id')}: {where}{issue.get('message', '')}")
+        for level, messages in groups.items():
+            if messages:
+                annotate(level, "Android lint diagnostics", "\n".join(messages))
         annotate("notice", "Android lint", f"{len(issues)} issue(s) in lint-results-debug.xml")
 
 
