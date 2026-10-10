@@ -13,7 +13,9 @@ enum PhoneNumber {
     /// Longueur totale maximale d'un E.164 (recommandation UIT-T E.164).
     static let maxLength = 15
 
-    enum Failure: Equatable {
+    /// Raison d'un rejet. Doit conformer à `Error` pour être utilisable comme
+    /// paramètre `Failure` d'un `Result`.
+    enum Failure: Error, Equatable {
         case empty
         case tooShort(String)
         case tooLong(String)
