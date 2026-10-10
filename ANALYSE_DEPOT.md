@@ -7,6 +7,49 @@
 
 ---
 
+## ⚑ Statut des corrections — mise à jour du 10/10/2026
+
+Toutes les anomalies de ce rapport ont été traitées dans le commit
+`fix: corrige l'ensemble des anomalies de l'audit (iOS + Android) et fiabilise la CI`.
+La branche de dev `arena/01a0f91d-guardcall` a d'abord été fusionnée en fast-forward
+(17 commits, `behind_by: 0`), puis corrigée.
+
+| # | Anomalie | Correction | Fichier |
+|---|---|---|---|
+| 3.1 | CI iOS en faux vert (pipe sans `pipefail`) | `set -euo pipefail` dans toutes les étapes | `.github/workflows/ios.yml` |
+| 3.2 | CI de `main` morte (pas de `xcodegen generate`) | étape XcodeGen + contrôle d'existence du `.xcodeproj` ; `main` contient désormais ce workflow | `.github/workflows/ios.yml` |
+| 3.3 | Bundle ID d'extension non préfixé | déjà corrigé par la fusion + test `testConstantsAreStable` qui l'assertion | `Shared/Constants.swift`, `GuardCallTests/` |
+| 3.4 | `setSilenceCall` (API 29) sans garde, `minSdk 26` | garde `Build.VERSION.SDK_INT >= Q` + lint `abortOnError = true` | `GuardCallScreeningService.kt`, `app/build.gradle.kts` |
+| 4.1 | Aucune validation E.164 | `PhoneNumber.validate` (indicatif pays, longueur 8-15, zéro initial) + messages d'erreur dans l'UI | `Shared/PhoneNumber.swift`, `ContentView.swift` |
+| 4.2 | Sur-blocage par suffixe Android | égalité stricte sur E.164 normalisé + test de régression | `BlocklistMatcher.kt`, `BlocklistMatcherTest.kt` |
+| 4.3 | Rechargement incrémental vide | instantané d'annuaire + deltas (ajouts **et** suppressions) | `Shared/DirectorySnapshot.swift`, `CallDirectoryHandler.swift` |
+| 4.4 | Modèles dupliqués app/extension | dossier `Shared/` compilé dans les deux cibles | `project.yml`, `Shared/` |
+| 4.5 | Split-brain DataStore / fichier / SharedPreferences | fichier JSON = unique source de vérité, écriture atomique, aucune exception avalée | `BlocklistStore.kt` |
+| 4.6 | Permissions Android surdimensionnées | les 5 permissions dangereuses retirées du manifeste | `AndroidManifest.xml` |
+| 5 | SwiftLint jamais installé | `brew install swiftlint` + étape bloquante ; `android/app/src` retiré de `included:` | `ios.yml`, `.swiftlint.yml` |
+| 5 | Tests Android masqués (`\|\| echo`) | `set -euo pipefail`, étape bloquante | `android.yml` |
+| 5 | `release.yml` : tag `v1.0` en dur + `--clobber` | tag dérivé de `versionName`, input optionnel | `release.yml` |
+| 6 | `PrivacyInfo.xcprivacy` exclu du bundle | `excludes:` supprimé → inclus comme ressource | `project.yml` |
+| 6 | UI pilotée par chaînes localisées | `enum ExtensionStatus` (titre, icône, teinte) | `ContentView.swift` |
+| 6 | `formatted(_:)` stub / code mort | `PhoneNumber.display` réel + test ; `PhoneNumberUtils.kt` mort supprimé | `Shared/PhoneNumber.swift` |
+| 6 | Blocage de démonstration par défaut | `BlocklistPayload.empty` / `EMPTY` + test | `Shared/Models.swift`, `Models.kt` |
+| 6 | Fallback `UserDefaults.standard` en production | confiné dans `#if DEBUG` | `Shared/BlocklistStore.swift` |
+| 6 | APK gonflé par `material-icons-extended` | retiré (~10 Mo), icône bouclier via `R.drawable.ic_shield` | `app/build.gradle.kts`, `MainScreen.kt` |
+| 7 | Tests : chemin critique CallKit non couvert | 6 → **19** tests iOS ; 0 → **18** tests JVM Android ; `setUp`/`tearDown` | `GuardCallTests/`, `android/app/src/test/` |
+| 8 | `gradle-wrapper.jar` absent | wrapper officiel Gradle 8.7.0 commité + `gradlew.bat` | `android/gradle/wrapper/` |
+| 8 | Pas de `LICENSE` | MIT | `LICENSE` |
+| 8 | `ANALYSE.md` / `ANALYSIS.md` périmés et doublonnés | supprimés, remplacés par ce document | — |
+| 8 | `.gitignore` absent sur `main` | présent (issu de la fusion) + règle `dist/` | `.gitignore` |
+
+**Vérifié après correction :** les 5 plists/entitlements/xcprivacy passent `plistlib`,
+les 10 XML Android sont bien formés, les 3 JSON d'assets passent `json.load`, les
+5 YAML passent `yaml.safe_load`, aucune ligne Swift ne dépasse 140 caractères,
+accolades/parenthèses équilibrées dans les 9 fichiers Swift et 11 fichiers Kotlin,
+`dist/` correctement ignoré par git. **Non vérifié localement** (pas d'outillage) :
+la compilation Swift/Kotlin — c'est la CI qui en atteste (§11).
+
+---
+
 ## 0. Verdict
 
 > Le dépôt contient **deux projets très différents selon la branche**, et la branche par défaut `main` est la **version la plus ancienne et la plus cassée**. Le code réellement abouti (iOS complet + portage Android) vit sur `arena/01a0f91d-guardcall`, qui a 17 commits d'avance sur `main`, **n'a jamais fait l'objet d'une PR** et n'a **jamais été fusionné**. La release publique `v1.0` (avec un APK de 16 Mo) a été publiée depuis cette branche non fusionnée.

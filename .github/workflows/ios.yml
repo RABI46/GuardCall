@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: ios-${{ github.ref }}
@@ -16,11 +17,23 @@ concurrency:
 jobs:
   build-and-test:
     name: Build & Test (XcodeGen + Simulator)
-    runs-on: macos-14
+    # macos-15 : Xcode 16.x. Sur macos-14 le Xcode par défaut est 15.4, incapable
+    # de lire un projet généré pour `xcodeVersion: "16.0"` (xcodebuild renvoie
+    # alors EX_IOERR / 74 : « Unable to read project »).
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          set -euo pipefail
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$XCODE" ]; then XCODE="/Applications/Xcode.app"; fi
+          echo "DEVELOPER_DIR=$XCODE/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Xcode retenu : $XCODE"
+          DEVELOPER_DIR="$XCODE/Contents/Developer" xcodebuild -version
 
       - name: Install XcodeGen
         run: |
@@ -32,10 +45,41 @@ jobs:
 
       - name: Generate Xcode project
         run: |
-          set -euo pipefail
-          xcodegen generate --spec project.yml
+          set -uo pipefail
+          xcodegen generate --spec project.yml > /tmp/xcodegen.log 2>&1
+          STATUS=$?
+          echo "--- sortie xcodegen ---"
+          cat /tmp/xcodegen.log
+          if [ "$STATUS" -ne 0 ]; then
+            # Les logs Actions ne sont pas toujours récupérables : l'erreur est
+            # republiée en annotation ET dans une issue.
+            SHORT=$(tail -n 3 /tmp/xcodegen.log | tr '\n' ' ' | tr -d '"' | head -c 400)
+            echo "::error title=XcodeGen a échoué (exit $STATUS)::$SHORT"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : xcodegen échoue sur ${GITHUB_SHA}" \
+              -f body="$(printf '```\n%s\n```\n' "$(tail -n 60 /tmp/xcodegen.log)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
           test -d GuardCall.xcodeproj || { echo "::error::GuardCall.xcodeproj manquant"; exit 1; }
-          xcodebuild -list -project GuardCall.xcodeproj
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Inspect generated project
+        run: |
+          set -uo pipefail
+          xcodebuild -list -project GuardCall.xcodeproj > /tmp/list.log 2>&1
+          STATUS=$?
+          cat /tmp/list.log
+          if [ "$STATUS" -ne 0 ]; then
+            SHORT=$(tail -n 3 /tmp/list.log | tr '\n' ' ' | tr -d '"' | head -c 400)
+            echo "::error title=xcodebuild -list a échoué (exit $STATUS)::$SHORT"
+            gh api "repos/${{ github.repository }}/issues" \
+              -f title="iOS CI : projet illisible sur ${GITHUB_SHA}" \
+              -f body="$(printf 'Xcode : %s\n\n```\n%s\n```\n' "$(xcodebuild -version | head -1)" "$(tail -n 60 /tmp/list.log)")" >/dev/null 2>&1 || true
+            exit "$STATUS"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Select simulator
         id: simulator
@@ -70,8 +114,7 @@ jobs:
             -destination "platform=iOS Simulator,name=${{ steps.simulator.outputs.device }},OS=latest" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
-            -enableCodeCoverage YES \
-            -resultBundlePath /tmp/GuardCallTests.xcresult 2>&1 | tee /tmp/test.log | tail -n 300
+            -enableCodeCoverage YES 2>&1 | tee /tmp/test.log | tail -n 300
 
       - name: Test summary
         if: always()
@@ -80,7 +123,8 @@ jobs:
           {
             echo "### Tests iOS"
             echo '```'
-            grep -E "Test Suite|Test Case.*(passed|failed)|Executed [0-9]+ test" /tmp/test.log | tail -n 60 || echo "aucune sortie de test"
+            grep -E "Test Suite|Test Case.*(passed|failed)|Executed [0-9]+ test" /tmp/test.log 2>/dev/null \
+              | tail -n 60 || echo "aucune sortie de test"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
